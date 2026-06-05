@@ -1,0 +1,23 @@
+[strip]
+# Per-LED APA102 brightness, 0.0..1.0 (mapped to the 5-bit brightness byte
+# in hardware). 0.25 ≈ 8/31 — tuned for a 2-cell USB power bank, all-night
+# runtime, art-piece visibility (NOT room-lighting). Raise toward 1.0 if
+# running off mains and you want it loud.
+brightness = 0.25
+
+[bloom]
+# Peak intensity of full-strip blooms. At brightness=0.25, walkup_peak=0.6
+# keeps the walk-up showpiece under ~1.3 A peak (safe for a 2 A USB bank).
+walkup_peak = 0.6
+dim_peak = 0.25
+
+[comet]
+tail_length = 3.0          # multiplier on base tail
+speed = 0.5                # global speed multiplier (affects dwell+transit)
+head_brightness = 1.4      # multiplier on head intensity
+
+[walkup]
+rssi_threshold = -45       # PLACEHOLDER — calibrate against rooftop capture, NOT desk data
+
+[rssi_ramp]
+gamma = 2.0                # PLACEHOLDER — calibrate against rooftop capture, NOT desk data

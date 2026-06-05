@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""Meshlights — drives a 144-LED APA102 strip from live MeshCore RX.
+
+Subscribes to EventType.RX_LOG_DATA, spawns one animation per packet, composites
+all live objects into a NumPy framebuffer, pushes frames to the strip via
+hardware SPI0. Renders at ~60fps while animations are live and drops to ~10fps
+during dormancy (idle heartbeat only) — battery installation budget.
+"""
+
+import argparse
+import asyncio
+import signal
+import sys
+import time
+
+import numpy as np
+
+try:
+    from meshcore import MeshCore, EventType
+except ImportError:
+    print("meshcore not installed:  pip install meshcore", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import board
+    import adafruit_dotstar
+except ImportError as e:
+    print(f"DotStar/blinka import failed: {e}", file=sys.stderr)
+    print("  pip install adafruit-circuitpython-dotstar adafruit-blinka", file=sys.stderr)
+    sys.exit(1)
+
+from config import (
+    PALETTE, UNKNOWN_COLOR, WALKUP_COLOR,
+    byte_to_pixel, load_config, rssi_to_intensity,
+)
+from animations import (
+    N_PIXELS, BASE_DWELL, BASE_TRANSIT, BASE_TAIL,
+    DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
+    Bloom, Comet, render_heartbeat,
+)
+
+
+PAYLOAD_ADVERT = 0x04
+
+PAYLOAD_LABELS = {
+    0x00: "REQ", 0x01: "RESPONSE", 0x02: "TXT_MSG", 0x03: "ACK",
+    0x04: "ADVERT", 0x05: "GRP_TXT", 0x06: "GRP_DATA", 0x07: "ANON_REQ",
+    0x08: "PATH", 0x09: "TRACE", 0x0A: "MULTIPART", 0x0B: "CONTROL",
+    0x0F: "RAW_CUSTOM",
+}
+
+
+class Engine:
+    def __init__(self, cfg, debug=False):
+        self.cfg = cfg
+        self.debug = debug
+        self.active = []
+        self.new_packet = asyncio.Event()
+        self.shutdown = asyncio.Event()
+        # Suppression window for own keepalive adverts (echo back as RX).
+        self.keepalive_until = 0.0
+        self.rx_count = 0
+
+    def on_rx(self, ev):
+        p = ev.payload or {}
+        a = ev.attributes or {}
+        payload_type = a.get("payload_type")
+        hops = a.get("path_len")
+        path_hex = a.get("path") or ""
+        rssi = p.get("rssi")
+        now = time.monotonic()
+
+        # Drop our own keepalive adverts (zero-hop ADVERT inside the post-TX
+        # window) — without this, the walk-up detector trips on our own echo.
+        if payload_type == PAYLOAD_ADVERT and (hops == 0 or hops is None) \
+                and now < self.keepalive_until:
+            return
+
+        color = PALETTE.get(payload_type, UNKNOWN_COLOR)
+        color_arr = np.array(color, dtype=np.float32)
+        intensity = rssi_to_intensity(rssi, self.cfg.rssi_ramp_gamma)
+        kind = "?"
+
+        if not hops:
+            # Hop-0: no path to trace.
+            if rssi is not None and rssi > self.cfg.walkup_rssi_threshold:
+                self.active.append(Bloom(
+                    color=np.array(WALKUP_COLOR, dtype=np.float32),
+                    peak=self.cfg.walkup_peak,
+                    duration=WALKUP_BLOOM_DURATION,
+                    start_time=now,
+                ))
+                kind = "WALKUP"
+            else:
+                self.active.append(Bloom(
+                    color=color_arr,
+                    peak=self.cfg.dim_bloom_peak,
+                    duration=DIM_BLOOM_DURATION,
+                    start_time=now,
+                ))
+                kind = "DIM_BLOOM"
+        else:
+            # Hop-N: trace the path. Take the first `hops` single bytes of
+            # path_hex (NOT chunked by path_hash_size — see plan rationale:
+            # path_bytes != hops*hash_size in 122/433 captured packets, but
+            # path_len is authoritative and the validated simulator uses
+            # 1-byte nodes regardless of hash_size).
+            need = hops * 2
+            if len(path_hex) < need:
+                if self.debug:
+                    print(f"WARN short path: hops={hops} path_hex_len={len(path_hex)}")
+                available = len(path_hex) // 2
+                if available < 1:
+                    return
+                hops = available
+            nodes = np.array(
+                [byte_to_pixel(path_hex[2*i:2*i+2]) for i in range(hops)],
+                dtype=np.int64,
+            )
+            self.active.append(Comet(
+                nodes=nodes,
+                color=color_arr,
+                intensity=intensity,
+                tail_length=BASE_TAIL * self.cfg.tail_length,
+                dwell=BASE_DWELL / self.cfg.speed,
+                transit=BASE_TRANSIT / self.cfg.speed,
+                head_brightness=self.cfg.head_brightness,
+                start_time=now,
+            ))
+            kind = f"COMET[{hops}]"
+
+        self.rx_count += 1
+        self.new_packet.set()
+        if self.debug:
+            label = PAYLOAD_LABELS.get(payload_type, "?")
+            rssi_str = f"{rssi}" if rssi is not None else "?"
+            print(f"RX  {label:8s} hops={hops if hops is not None else '?':<2} "
+                  f"rssi={rssi_str:<5} → {kind} [#{self.rx_count}]")
+
+    async def render_loop(self, strip, pixel_view):
+        fb = np.zeros((N_PIXELS, 3), dtype=np.float32)
+        while not self.shutdown.is_set():
+            t = time.monotonic()
+            fb.fill(0.0)
+            if self.active:
+                for obj in list(self.active):
+                    obj.render(fb, t)
+                    if obj.is_done(t):
+                        self.active.remove(obj)
+                target_dt = 1.0 / 60.0
+            else:
+                render_heartbeat(fb, t)
+                target_dt = 1.0 / 10.0
+
+            np.clip(fb, 0.0, 255.0, out=fb)
+            fb_u8 = fb.astype(np.uint8)
+            # Vectorized write into the DotStar buffer (no per-pixel Python loop).
+            pixel_view[:, 1] = fb_u8[:, 2]   # B
+            pixel_view[:, 2] = fb_u8[:, 1]   # G
+            pixel_view[:, 3] = fb_u8[:, 0]   # R
+            try:
+                strip.show()
+            except Exception as e:
+                print(f"strip.show() failed: {e}", file=sys.stderr)
+
+            try:
+                await asyncio.wait_for(self.new_packet.wait(), timeout=target_dt)
+            except asyncio.TimeoutError:
+                pass
+            self.new_packet.clear()
+
+
+def setup_strip(brightness):
+    strip = adafruit_dotstar.DotStar(
+        board.SCK, board.MOSI, N_PIXELS,
+        brightness=1.0, auto_write=False,
+    )
+    # Locate the internal wire-format buffer. Recent adafruit_dotstar uses
+    # `_buffer`; some older versions used `_buf`. Try both.
+    buf_attr = None
+    for name in ("_buffer", "_buf"):
+        if hasattr(strip, name):
+            buf_attr = name
+            break
+    if buf_attr is None:
+        raise RuntimeError(
+            "adafruit_dotstar has neither _buffer nor _buf on this version — "
+            "the engine writes directly to that buffer to avoid per-pixel "
+            "Python loops on the hot path. Pin a known-good version in "
+            "pyproject.toml and re-check."
+        )
+    raw = getattr(strip, buf_attr)
+    expected = 4 + 4 * N_PIXELS
+    if len(raw) < expected:
+        raise RuntimeError(
+            f"DotStar {buf_attr} too small: {len(raw)} < {expected}"
+        )
+    buf = np.frombuffer(raw, dtype=np.uint8)
+    pixel_view = buf[4:4 + 4 * N_PIXELS].reshape(N_PIXELS, 4)
+    # APA102 per-LED brightness byte: top 3 bits MUST be 0b111, low 5 bits
+    # are the 0–31 brightness. Set ONCE at init — this is the primary power
+    # knob (per-LED current scales with it). 0 = LEDs off entirely.
+    b5 = max(0, min(31, int(round(31 * brightness))))
+    pixel_view[:, 0] = 0xE0 | b5
+    return strip, pixel_view
+
+
+async def send_keepalive(mc, engine, reason):
+    # Set the suppression window BEFORE TX so the echo lands inside it.
+    engine.keepalive_until = time.monotonic() + 3.0
+    try:
+        r = await mc.commands.send_advert(flood=False)
+        if getattr(r, "type", None) == EventType.ERROR:
+            print(f"{reason} advert error: {r.payload}", file=sys.stderr)
+            return False
+        return True
+    except Exception as e:
+        print(f"{reason} advert failed: {e}", file=sys.stderr)
+        return False
+
+
+async def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", default="/dev/ttyACM0")
+    ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--config", default="config.toml")
+    ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--no-keepalive", action="store_true",
+                    help="disable the AGC-stick keepalive advert "
+                         "(RX may go dormant — see MeshCore #1209)")
+    ap.add_argument("--keepalive-sec", type=int, default=300)
+    args = ap.parse_args()
+
+    cfg = load_config(args.config)
+    if args.debug:
+        print("config:", cfg)
+
+    strip, pixel_view = setup_strip(cfg.brightness)
+    print(f"strip up ({N_PIXELS} px, hardware SPI0, brightness={cfg.brightness:.2f})")
+
+    print(f"connecting to {args.port} @ {args.baud} ...")
+    try:
+        mc = await MeshCore.create_serial(args.port, args.baud, debug=args.debug)
+    except Exception as e:
+        print(f"connect failed: {e}", file=sys.stderr)
+        print("checks: is the RAK at this port? (ls /dev/ttyACM*) "
+              "in the 'dialout' group? (groups)", file=sys.stderr)
+        sys.exit(1)
+    print("connected.")
+
+    engine = Engine(cfg, debug=args.debug)
+    mc.subscribe(EventType.RX_LOG_DATA, engine.on_rx)
+    print("subscribed to RX_LOG_DATA. Ctrl-C to stop.\n")
+
+    if not args.no_keepalive:
+        if await send_keepalive(mc, engine, "startup"):
+            print("startup advert sent — RX armed / AGC unstuck")
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, engine.shutdown.set)
+
+    async def keepalive_worker():
+        while not engine.shutdown.is_set():
+            try:
+                await asyncio.wait_for(engine.shutdown.wait(),
+                                       timeout=args.keepalive_sec)
+            except asyncio.TimeoutError:
+                pass
+            if engine.shutdown.is_set():
+                break
+            await send_keepalive(mc, engine, "keepalive")
+
+    tasks = [asyncio.create_task(engine.render_loop(strip, pixel_view))]
+    if not args.no_keepalive and args.keepalive_sec > 0:
+        tasks.append(asyncio.create_task(keepalive_worker()))
+
+    await engine.shutdown.wait()
+    for t in tasks:
+        t.cancel()
+    for t in tasks:
+        try:
+            await t
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    # Blank the strip on the way out.
+    try:
+        pixel_view[:, 1:] = 0
+        strip.show()
+    except Exception:
+        pass
+
+    try:
+        await mc.disconnect()
+    except Exception:
+        pass
+    print("\nshutdown complete.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

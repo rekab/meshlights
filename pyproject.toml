@@ -1,0 +1,14 @@
+[project]
+name = "meshlights"
+version = "0.1.0"
+description = "Meshlights — drives a 144-LED APA102 strip from live MeshCore RX events"
+requires-python = ">=3.11"
+dependencies = [
+    "meshcore",
+    "numpy",
+    "adafruit-circuitpython-dotstar",
+    "adafruit-blinka",
+]
+
+[tool.uv]
+package = false
