@@ -13,6 +13,17 @@ arrivals and a soft heartbeat when the mesh is quiet.
 - **Host:** Raspberry Pi 2 (development) / Pi Zero 2W (deployment).
 - **PSU:** external 5V supply for the strip — see the power note below.
 
+### OS image for the Pi Zero 2W
+
+Use **Raspberry Pi OS (64-bit) Lite**. The Zero 2W is a 64-bit aarch64 SoC,
+and PyPI ships aarch64 wheels for everything in `pyproject.toml` — so
+`uv sync` finishes in seconds with no C compiler involved. The 32-bit
+(armv7l) image, by contrast, has to compile a couple of `adafruit-blinka`
+transitive deps (`sysv-ipc`, `dbus-fast`) from source, and a single `gcc`
+invocation can blow past the Zero 2W's 512 MB RAM into swap and lock the
+box up hard. Skip that whole class of problem by starting on 64-bit Lite.
+"Lite" matters too — no desktop, more headroom for the engine.
+
 ## Wiring
 
 Four wires from the strip's **input end** (look for the arrow on the PCB —
