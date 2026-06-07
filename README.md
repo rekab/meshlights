@@ -63,9 +63,15 @@ between the Pi and the strip — that's the canonical fix.
 
 ## Enable SPI
 
-`sudo raspi-config` → **Interface Options** → **SPI** → **Enable**, then reboot. Or:
+`sudo raspi-config` → **Interface Options** → **SPI** → **Enable**, then reboot.
+Non-interactive equivalent (useful over SSH):
 
-Add `dtparam=spi=on` to `/boot/firmware/config.txt` (note: it's
+```
+sudo raspi-config nonint do_spi 0      # 0 means "enable" in nonint, yes really
+sudo reboot
+```
+
+Or add `dtparam=spi=on` to `/boot/firmware/config.txt` (note: it's
 `/boot/firmware/config.txt` on current Raspberry Pi OS Bookworm; older images
 used `/boot/config.txt`), then reboot.
 

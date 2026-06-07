@@ -175,28 +175,33 @@ def setup_strip(brightness):
         board.SCK, board.MOSI, N_PIXELS,
         brightness=1.0, auto_write=False,
     )
-    # Locate the internal wire-format buffer. Recent adafruit_dotstar uses
-    # `_buffer`; some older versions used `_buf`. Try both.
-    buf_attr = None
-    for name in ("_buffer", "_buf"):
-        if hasattr(strip, name):
-            buf_attr = name
-            break
+    # Locate the internal wire-format buffer that show() transmits.
+    # Current adafruit_pixelbuf (the parent class) uses
+    # `_post_brightness_buffer`; older standalone adafruit_dotstar versions
+    # used `_buffer` or `_buf`. We init with brightness=1.0, which hits the
+    # setter's <0.001 early-return, so `_pre_brightness_buffer` stays None
+    # and direct writes to `_post_brightness_buffer` go straight to SPI.
+    buf_attr = next(
+        (name for name in ("_post_brightness_buffer", "_buffer", "_buf")
+         if hasattr(strip, name)),
+        None,
+    )
     if buf_attr is None:
         raise RuntimeError(
-            "adafruit_dotstar has neither _buffer nor _buf on this version — "
-            "the engine writes directly to that buffer to avoid per-pixel "
-            "Python loops on the hot path. Pin a known-good version in "
-            "pyproject.toml and re-check."
+            "adafruit_dotstar/pixelbuf has no recognized wire-buffer "
+            "attribute on this version — the engine writes directly to "
+            "that buffer to avoid per-pixel Python loops on the hot path. "
+            "Pin a known-good version in pyproject.toml and re-check."
         )
     raw = getattr(strip, buf_attr)
-    expected = 4 + 4 * N_PIXELS
-    if len(raw) < expected:
+    offset = getattr(strip, "_offset", 4)   # bytes before the LED data area
+    needed = offset + 4 * N_PIXELS
+    if len(raw) < needed:
         raise RuntimeError(
-            f"DotStar {buf_attr} too small: {len(raw)} < {expected}"
+            f"DotStar {buf_attr} too small: {len(raw)} < {needed}"
         )
     buf = np.frombuffer(raw, dtype=np.uint8)
-    pixel_view = buf[4:4 + 4 * N_PIXELS].reshape(N_PIXELS, 4)
+    pixel_view = buf[offset:offset + 4 * N_PIXELS].reshape(N_PIXELS, 4)
     # APA102 per-LED brightness byte: top 3 bits MUST be 0b111, low 5 bits
     # are the 0–31 brightness. Set ONCE at init — this is the primary power
     # knob (per-LED current scales with it). 0 = LEDs off entirely.
