@@ -216,6 +216,7 @@ dependencies = [
     { name = "adafruit-circuitpython-dotstar" },
     { name = "meshcore" },
     { name = "numpy" },
+    { name = "rpi-gpio" },
 ]
 
 [package.metadata]
@@ -224,6 +225,7 @@ requires-dist = [
     { name = "adafruit-circuitpython-dotstar" },
     { name = "meshcore" },
     { name = "numpy" },
+    { name = "rpi-gpio" },
 ]
 
 [[package]]
@@ -460,6 +462,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/00/6b/ce3727395e52b7b76
 wheels = [
     { url = "https://files.pythonhosted.org/packages/28/b8/27e6312e86408a44fe16bd28ee12dd98608b39f7e7e57884a24e8f29b573/pyusb-1.3.1-py3-none-any.whl", hash = "sha256:bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430", size = 58465, upload-time = "2025-01-08T23:45:00.029Z" },
 ]
+
+[[package]]
+name = "rpi-gpio"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/0f/10b524a12b3445af1c607c27b2f5ed122ef55756e29942900e5c950735f2/RPi.GPIO-0.7.1.tar.gz", hash = "sha256:cd61c4b03c37b62bba4a5acfea9862749c33c618e0295e7e90aa4713fb373b70", size = 29090, upload-time = "2022-02-06T15:15:06.022Z" }
 
 [[package]]
 name = "sysv-ipc"
