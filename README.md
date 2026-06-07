@@ -16,13 +16,14 @@ arrivals and a soft heartbeat when the mesh is quiet.
 ### OS image for the Pi Zero 2W
 
 Use **Raspberry Pi OS (64-bit) Lite**. The Zero 2W is a 64-bit aarch64 SoC,
-and PyPI ships aarch64 wheels for everything in `pyproject.toml` — so
-`uv sync` finishes in seconds with no C compiler involved. The 32-bit
-(armv7l) image, by contrast, has to compile a couple of `adafruit-blinka`
-transitive deps (`sysv-ipc`, `dbus-fast`) from source, and a single `gcc`
-invocation can blow past the Zero 2W's 512 MB RAM into swap and lock the
-box up hard. Skip that whole class of problem by starting on 64-bit Lite.
-"Lite" matters too — no desktop, more headroom for the engine.
+and on aarch64 essentially everything in `pyproject.toml` is a prebuilt
+wheel (only `RPi.GPIO` still compiles from source, and it's tiny — seconds,
+no RAM pressure). The 32-bit (armv7l) image, by contrast, has to compile a
+couple of `adafruit-blinka` transitive deps (`sysv-ipc`, `dbus-fast`) from
+source, and a single `gcc` invocation can blow past the Zero 2W's 512 MB
+RAM into swap and lock the box up hard. Skip that whole class of problem
+by starting on 64-bit Lite. "Lite" matters too — no desktop, more headroom
+for the engine.
 
 ## Wiring
 
@@ -97,6 +98,14 @@ Install uv once on the Pi:
 
 ```
 curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+You'll also need the Python C headers — the `RPi.GPIO` package compiles
+from source on every platform (no PyPI wheels), and the build needs
+`Python.h`:
+
+```
+sudo apt install -y python3-dev
 ```
 
 Then from the repo root:
