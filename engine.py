@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Meshlights — drives a 144-LED APA102 strip from live MeshCore RX.
+"""Meshlights — drives an APA102 LED strip from live MeshCore RX.
 
 Subscribes to EventType.RX_LOG_DATA, spawns one animation per packet, composites
 all live objects into a NumPy framebuffer, pushes frames to the strip via

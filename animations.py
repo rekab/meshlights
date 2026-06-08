@@ -1,7 +1,7 @@
 """Vectorized NumPy animation objects: Comet, Bloom, plus the idle heartbeat.
 
 No per-pixel Python loops on the render path. All accumulation is additive
-into a (144, 3) float32 framebuffer — caller clips once after composition.
+into an (N_PIXELS, 3) float32 framebuffer — caller clips once after composition.
 """
 
 import math

@@ -2,14 +2,15 @@
 
 A generative LED art installation driven by live MeshCore mesh traffic. A
 RAK4631 running MeshCore companion firmware is USB-tethered to a Raspberry Pi;
-a 144-LED APA102/DotStar strip on hardware SPI0 visualizes every received
-packet as a path-trace "comet," with full-strip blooms for direct (zero-hop)
-arrivals and a soft heartbeat when the mesh is quiet.
+an APA102/DotStar strip on hardware SPI0 visualizes every received packet as
+a path-trace "comet," with full-strip blooms for direct (zero-hop) arrivals
+and a soft heartbeat when the mesh is quiet. Strip length is configurable
+(see `strip.pixels` in `config.toml`).
 
 ## Hardware
 
 - **Radio:** RAK4631 on `/dev/ttyACM0` running MeshCore companion firmware.
-- **Strip:** 144-LED APA102/DotStar on hardware SPI0.
+- **Strip:** APA102/DotStar on hardware SPI0 (LED count via `strip.pixels`).
 - **Host:** Raspberry Pi 2 (development) / Pi Zero 2W (deployment).
 - **PSU:** external 5V supply for the strip — see the power note below.
 
@@ -47,12 +48,13 @@ with no chip-select.
 
 ### Power note
 
-144 APA102s at full white can pull ~8 A peak (≈60 mA per LED × 144). Never
-power that off the Pi's 5V rail — it will brown-out the Pi instantly. Use a
-beefy 5V PSU (5 V / 10 A or better with margin), and **tie the PSU ground to
-a Pi GND pin** so the data/clock signals share a reference. For runs longer
-than ~1 m, inject 5 V at both ends of the strip to avoid voltage droop dimming
-the far end.
+APA102s pull ~60 mA per LED at full white — so a 144-LED strip can peak at
+~8 A, a 70-LED strip at ~4 A, etc. Never power that off the Pi's 5V rail at
+any meaningful length — it will brown-out the Pi instantly. Use a beefy 5V
+PSU (size for your strip length with margin), and **tie the PSU ground to a
+Pi GND pin** so the data/clock signals share a reference. For runs longer
+than ~1 m, inject 5 V at both ends of the strip to avoid voltage droop
+dimming the far end.
 
 ### 3.3 V → 5 V signalling
 
@@ -175,7 +177,7 @@ energy) and **night-time art-piece viewing**, not room lighting. Three knobs:
 | Knob | Default | What it does |
 |---|---|---|
 | `strip.brightness` | `0.25` | Maps to the APA102 per-LED 5-bit brightness byte (`int(31 * b)`). This is the primary current cap — per-LED current scales linearly with it. |
-| `bloom.walkup_peak` | `0.6` | Intensity of the white walk-up bloom (the only thing that lights all 144 LEDs at once). |
+| `bloom.walkup_peak` | `0.6` | Intensity of the white walk-up bloom (the only thing that lights the entire strip at once). |
 | `bloom.dim_peak` | `0.25` | Intensity of dim zero-hop blooms. |
 
 Rough current envelope at defaults (`brightness=0.25`):
