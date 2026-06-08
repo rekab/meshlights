@@ -37,7 +37,7 @@ from config import (
 from animations import (
     BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
-    Bloom, Comet, render_heartbeat,
+    Bloom, Comet, Walkup, render_heartbeat,
 )
 
 
@@ -87,7 +87,7 @@ class Engine:
         if not hops:
             # Hop-0: no path to trace.
             if rssi is not None and rssi > self.cfg.walkup_rssi_threshold:
-                self.active.append(Bloom(
+                self.active.append(Walkup(
                     color=np.array(WALKUP_COLOR, dtype=np.float32),
                     peak=self.cfg.walkup_peak,
                     duration=WALKUP_BLOOM_DURATION,

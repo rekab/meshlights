@@ -58,7 +58,7 @@ import animations
 from animations import (
     BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
-    Bloom, Comet, render_heartbeat,
+    Bloom, Comet, Walkup, render_heartbeat,
 )
 from config import HEAD_PALETTE, PALETTE, UNKNOWN_HEAD_COLOR, WALKUP_COLOR, load_config
 
@@ -142,7 +142,7 @@ def make_comet(cfg, nodes, color=(60, 150, 255), head_color=(255, 200, 90),
 
 
 def make_walkup(cfg):
-    return Bloom(
+    return Walkup(
         color=np.array(WALKUP_COLOR, dtype=np.float32),
         peak=cfg.walkup_peak,
         duration=WALKUP_BLOOM_DURATION,
