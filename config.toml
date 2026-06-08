@@ -18,7 +18,12 @@ walkup_peak = 0.6
 dim_peak = 0.25
 
 [comet]
-tail_length = 3.0          # multiplier on base tail
+# Multiplier on the base per-pixel trail duration (~0.2s). The tail acts as
+# a tracer: each pixel the head touches stays lit for tail_duration seconds
+# then fades out. Slow / oscillating heads naturally produce short trails;
+# fast / wide-ranging heads produce long ones. Trail can never extend past
+# pixels the head has actually visited.
+tail_duration = 1.0
 speed = 0.5                # global speed multiplier (affects dwell+transit)
 head_brightness = 1.4      # multiplier on head intensity
 

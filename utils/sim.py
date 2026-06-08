@@ -51,7 +51,7 @@ except ImportError as e:
 
 import animations
 from animations import (
-    BASE_DWELL, BASE_TAIL, BASE_TRANSIT,
+    BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
     Bloom, Comet, render_heartbeat,
 )
@@ -104,7 +104,7 @@ def make_comet(cfg, nodes, color=(60, 150, 255), head_color=(255, 200, 90),
         color=np.array(color, dtype=np.float32),
         head_color=np.array(head_color, dtype=np.float32),
         intensity=intensity,
-        tail_length=BASE_TAIL * cfg.tail_length,
+        tail_duration=BASE_TAIL_DURATION * cfg.tail_duration,
         dwell=BASE_DWELL / cfg.speed,
         transit=BASE_TRANSIT / cfg.speed,
         head_brightness=cfg.head_brightness,

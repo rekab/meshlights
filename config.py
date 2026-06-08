@@ -37,7 +37,7 @@ UNKNOWN_HEAD_COLOR = (255, 240, 200)   # warm cream (avoid pure white — that's
 @dataclass(frozen=True)
 class Config:
     pixels: int                  # actual LED count on the strip
-    tail_length: float
+    tail_duration: float         # multiplier on BASE_TAIL_DURATION (sec)
     speed: float
     head_brightness: float
     walkup_rssi_threshold: int
@@ -54,7 +54,7 @@ def load_config(path):
     bloom = data.get("bloom", {})
     return Config(
         pixels=int(strip.get("pixels", 144)),
-        tail_length=float(data["comet"]["tail_length"]),
+        tail_duration=float(data["comet"]["tail_duration"]),
         speed=float(data["comet"]["speed"]),
         head_brightness=float(data["comet"]["head_brightness"]),
         walkup_rssi_threshold=int(data["walkup"]["rssi_threshold"]),

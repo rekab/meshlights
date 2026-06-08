@@ -18,7 +18,7 @@ N_PIXELS = 144
 # Base timings (config multipliers scale these)
 BASE_DWELL = 0.15
 BASE_TRANSIT = 0.25
-BASE_TAIL = 3.0
+BASE_TAIL_DURATION = 0.2     # seconds — base time a visited pixel stays lit before fading
 SPARK_DURATION = 1.1
 WALKUP_BLOOM_DURATION = 1.5
 DIM_BLOOM_DURATION = 1.0
@@ -89,7 +89,7 @@ class Comet:
     color: np.ndarray        # float32 RGB — tail / payload-type color
     head_color: np.ndarray   # float32 RGB — accent color at the head pixel
     intensity: float
-    tail_length: float       # pixels — max tail length when fully extended
+    tail_duration: float     # seconds — how long a visited pixel stays lit before fading
     dwell: float
     transit: float
     head_brightness: float   # multiplier on head pixel only (not tail)
@@ -97,6 +97,13 @@ class Comet:
     last_direction: float = 1.0
     sparks: list = field(default_factory=list)   # list[(pixel:int, t_spawn:float)]
     _spark_seeded: int = -1                       # highest seeded node index
+    # Per-pixel last-visit timestamps (init lazy on first render to match
+    # animations.configure()-set strip length). The tail is a TEMPORAL trail
+    # — each pixel records when the head last touched it, and fades over
+    # tail_duration seconds. Slow / oscillating heads produce short trails;
+    # fast / wide-ranging heads produce long ones. Means the tail can never
+    # extend past where the head has actually been.
+    _trail_times: np.ndarray = None
 
     def __post_init__(self):
         if len(self.nodes) == 0:
@@ -125,25 +132,17 @@ class Comet:
         final_dwell_start = (n - 1) * cycle
         final_dwell_end = final_dwell_start + self.dwell
 
-        # Head position + visibility + current tail length. Explicit tri-branch
-        # with the final dwell carved out so we never read nodes[k+1] past the
-        # end. Tail length contracts during dwell (catches up to the head) and
-        # extends during transit (matches head's smoothstep easing) — boundary
-        # values are continuous (0 at dwell-end == transit-start, full at
-        # transit-end == next dwell-start) so there's no visible snap.
+        # Head position + visibility. Tri-branch with the final dwell carved
+        # out so we never read nodes[k+1] past the end.
         head_visible = True
         head_pos = 0.0
         direction = self.last_direction
-        tail_length_now = 0.0
 
         if elapsed >= final_dwell_end:
             head_visible = False
             self._ensure_sparks_through(n - 1)
         elif elapsed >= final_dwell_start:
-            # Final dwell — sit on last node; do NOT index nodes[k+1].
             head_pos = float(self.nodes[-1])
-            dwell_progress = (elapsed - final_dwell_start) / self.dwell
-            tail_length_now = self.tail_length * max(0.0, 1.0 - dwell_progress)
             self._ensure_sparks_through(n - 1)
         else:
             k = int(elapsed // cycle)            # guarded: k <= n - 2 here
@@ -154,13 +153,10 @@ class Comet:
             self.last_direction = direction
             if s < self.dwell:
                 head_pos = float(self.nodes[k])
-                dwell_progress = s / self.dwell
-                tail_length_now = self.tail_length * (1.0 - dwell_progress)
             else:
                 f = (s - self.dwell) / self.transit
                 f_e = f * f * (3.0 - 2.0 * f)
                 head_pos = float(self.nodes[k]) + d * f_e
-                tail_length_now = self.tail_length * f_e
 
         # Sparks (vectorized fade + scatter add) — persistent route trail
         # stays in the tail/payload color, not the head accent.
@@ -181,32 +177,47 @@ class Comet:
             if not alive.all():
                 self.sparks = [s for s, ok in zip(self.sparks, alive) if ok]
 
+        n_px = _POSITIONS.shape[0]
+
+        # Lazy-init the per-pixel last-visit array to match current strip
+        # length (animations.configure() may have rebuilt N_PIXELS).
+        if self._trail_times is None or self._trail_times.shape[0] != n_px:
+            self._trail_times = np.full(n_px, -1e9, dtype=np.float64)
+
+        # Mark the head's current position into the trail. Anti-aliased into
+        # floor + ceil so sub-pixel motion still registers as continuous
+        # coverage. Only mark when the head is visible; after final_dwell_end
+        # the trail just fades out, no new marks.
+        if head_visible:
+            head_int = int(head_pos)
+            head_frac = float(head_pos) - head_int
+            if 0 <= head_int < n_px:
+                self._trail_times[head_int] = t
+            if head_frac > 0.0 and 0 <= head_int + 1 < n_px:
+                self._trail_times[head_int + 1] = t
+
+        # Render trail with temporal quadratic fade. Mask out the head pixel(s)
+        # so they only carry the head accent color, not tail color too.
+        trail_age = t - self._trail_times
+        trail_alive = trail_age < self.tail_duration
+        if head_visible:
+            if 0 <= head_int < n_px:
+                trail_alive[head_int] = False
+            if head_frac > 0.0 and 0 <= head_int + 1 < n_px:
+                trail_alive[head_int + 1] = False
+        if trail_alive.any():
+            trail_fade = np.where(
+                trail_alive,
+                (1.0 - trail_age / self.tail_duration) ** 2,
+                0.0,
+            ).astype(np.float32)
+            fb += self.color * trail_fade[:, None] * self.intensity
+
         if not head_visible:
             return
 
-        n_px = _POSITIONS.shape[0]
-
-        # Tail — from one pixel behind the head out to `tail_length_now`,
-        # quadratic fade. Starts at dist=1 (not 0) so the head pixel stays
-        # purely in head_color, preserving the head/tail color contrast.
-        # Skipped entirely when the tail has contracted below one pixel.
-        if tail_length_now > 1.0:
-            dist = (head_pos - _POSITIONS) * direction
-            mask = (dist >= 1.0) & (dist <= tail_length_now)
-            if mask.any():
-                span = max(tail_length_now - 1.0, 1e-6)
-                fade = np.where(
-                    mask,
-                    (1.0 - (dist - 1.0) / span) ** 2,
-                    0.0,
-                ).astype(np.float32)
-                fb += self.color * fade[:, None] * self.intensity
-
         # Head — anti-aliased single pixel at head_pos in head_color.
-        # head_brightness multiplier applies HERE only (not on tail), so the
-        # accent really pops.
-        head_int = int(head_pos)
-        head_frac = float(head_pos) - head_int
+        # head_brightness multiplier applies HERE only (not on the trail).
         head_amp = self.head_brightness * self.intensity
         if 0 <= head_int < n_px:
             fb[head_int] += self.head_color * ((1.0 - head_frac) * head_amp)
@@ -217,8 +228,11 @@ class Comet:
         elapsed = t - self.start_time
         n = len(self.nodes)
         final_dwell_end = (n - 1) * (self.dwell + self.transit) + self.dwell
-        if elapsed < final_dwell_end:
+        # Wait for the trail to fade after the head's last update
+        # (the head stops marking pixels once elapsed >= final_dwell_end)
+        if elapsed < final_dwell_end + self.tail_duration:
             return False
+        # And for any sparks still fading
         if not self.sparks:
             return True
         return all((t - ts) >= SPARK_DURATION for _, ts in self.sparks)

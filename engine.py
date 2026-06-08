@@ -35,7 +35,7 @@ from config import (
     byte_to_pixel, load_config, rssi_to_intensity,
 )
 from animations import (
-    BASE_DWELL, BASE_TRANSIT, BASE_TAIL,
+    BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
     Bloom, Comet, render_heartbeat,
 )
@@ -126,7 +126,7 @@ class Engine:
                 color=color_arr,
                 head_color=head_color_arr,
                 intensity=intensity,
-                tail_length=BASE_TAIL * self.cfg.tail_length,
+                tail_duration=BASE_TAIL_DURATION * self.cfg.tail_duration,
                 dwell=BASE_DWELL / self.cfg.speed,
                 transit=BASE_TRANSIT / self.cfg.speed,
                 head_brightness=self.cfg.head_brightness,
