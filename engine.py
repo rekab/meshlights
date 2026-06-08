@@ -29,12 +29,13 @@ except ImportError as e:
     print("  pip install adafruit-circuitpython-dotstar adafruit-blinka", file=sys.stderr)
     sys.exit(1)
 
+import animations
 from config import (
     PALETTE, UNKNOWN_COLOR, WALKUP_COLOR,
     byte_to_pixel, load_config, rssi_to_intensity,
 )
 from animations import (
-    N_PIXELS, BASE_DWELL, BASE_TRANSIT, BASE_TAIL,
+    BASE_DWELL, BASE_TRANSIT, BASE_TAIL,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
     Bloom, Comet, render_heartbeat,
 )
@@ -114,7 +115,8 @@ class Engine:
                     return
                 hops = available
             nodes = np.array(
-                [byte_to_pixel(path_hex[2*i:2*i+2]) for i in range(hops)],
+                [byte_to_pixel(path_hex[2*i:2*i+2], self.cfg.pixels)
+                 for i in range(hops)],
                 dtype=np.int64,
             )
             self.active.append(Comet(
@@ -138,7 +140,7 @@ class Engine:
                   f"rssi={rssi_str:<5} → {kind} [#{self.rx_count}]")
 
     async def render_loop(self, strip, pixel_view):
-        fb = np.zeros((N_PIXELS, 3), dtype=np.float32)
+        fb = np.zeros((self.cfg.pixels, 3), dtype=np.float32)
         while not self.shutdown.is_set():
             t = time.monotonic()
             fb.fill(0.0)
@@ -170,9 +172,9 @@ class Engine:
             self.new_packet.clear()
 
 
-def setup_strip(brightness):
+def setup_strip(brightness, n_pixels):
     strip = adafruit_dotstar.DotStar(
-        board.SCK, board.MOSI, N_PIXELS,
+        board.SCK, board.MOSI, n_pixels,
         brightness=1.0, auto_write=False,
     )
     # Locate the internal wire-format buffer that show() transmits.
@@ -195,13 +197,13 @@ def setup_strip(brightness):
         )
     raw = getattr(strip, buf_attr)
     offset = getattr(strip, "_offset", 4)   # bytes before the LED data area
-    needed = offset + 4 * N_PIXELS
+    needed = offset + 4 * n_pixels
     if len(raw) < needed:
         raise RuntimeError(
             f"DotStar {buf_attr} too small: {len(raw)} < {needed}"
         )
     buf = np.frombuffer(raw, dtype=np.uint8)
-    pixel_view = buf[offset:offset + 4 * N_PIXELS].reshape(N_PIXELS, 4)
+    pixel_view = buf[offset:offset + 4 * n_pixels].reshape(n_pixels, 4)
     # APA102 per-LED brightness byte: top 3 bits MUST be 0b111, low 5 bits
     # are the 0–31 brightness. Set ONCE at init — this is the primary power
     # knob (per-LED current scales with it). 0 = LEDs off entirely.
@@ -240,8 +242,9 @@ async def main():
     if args.debug:
         print("config:", cfg)
 
-    strip, pixel_view = setup_strip(cfg.brightness)
-    print(f"strip up ({N_PIXELS} px, hardware SPI0, brightness={cfg.brightness:.2f})")
+    animations.configure(cfg.pixels)
+    strip, pixel_view = setup_strip(cfg.brightness, cfg.pixels)
+    print(f"strip up ({cfg.pixels} px, hardware SPI0, brightness={cfg.brightness:.2f})")
 
     print(f"connecting to {args.port} @ {args.baud} ...")
     try:

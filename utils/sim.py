@@ -49,9 +49,10 @@ except ImportError as e:
     print(f"DotStar/blinka import failed: {e}", file=sys.stderr)
     sys.exit(1)
 
+import animations
 from animations import (
     BASE_DWELL, BASE_TAIL, BASE_TRANSIT,
-    DIM_BLOOM_DURATION, N_PIXELS, WALKUP_BLOOM_DURATION,
+    DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
     Bloom, Comet, render_heartbeat,
 )
 from config import WALKUP_COLOR, load_config
@@ -128,7 +129,8 @@ def make_dim_bloom(cfg, color):
 class Sim:
     def __init__(self, config_path):
         self.cfg = load_config(config_path)
-        self.strip, self.pixel_view = setup_strip(self.cfg.brightness)
+        animations.configure(self.cfg.pixels)
+        self.strip, self.pixel_view = setup_strip(self.cfg.brightness, self.cfg.pixels)
         self.active = []
         self.lock = threading.Lock()
         self.stop = False
@@ -136,7 +138,7 @@ class Sim:
         self.render_thread.start()
 
     def _render_loop(self):
-        fb = np.zeros((N_PIXELS, 3), dtype=np.float32)
+        fb = np.zeros((self.cfg.pixels, 3), dtype=np.float32)
         while not self.stop:
             t = time.monotonic()
             fb.fill(0.0)
@@ -218,10 +220,10 @@ def handle(sim, cmd, arg):
     elif cmd == "pixel":
         parts = arg.split(None, 1)
         idx = int(parts[0])
-        if not (0 <= idx < N_PIXELS):
-            raise ValueError(f"pixel index out of range 0..{N_PIXELS-1}")
+        if not (0 <= idx < sim.cfg.pixels):
+            raise ValueError(f"pixel index out of range 0..{sim.cfg.pixels-1}")
         color = parse_color(parts[1]) if len(parts) > 1 else (255, 255, 255)
-        p = np.zeros((N_PIXELS, 3), dtype=np.float32)
+        p = np.zeros((sim.cfg.pixels, 3), dtype=np.float32)
         p[idx] = color
         sim.add(HoldPattern(p))
         print(f"lit pixel {idx} = {color}")
@@ -229,9 +231,9 @@ def handle(sim, cmd, arg):
     elif cmd == "pixels":
         idxs = [int(x) for x in arg.split(",")]
         for i in idxs:
-            if not (0 <= i < N_PIXELS):
-                raise ValueError(f"pixel index {i} out of range 0..{N_PIXELS-1}")
-        p = np.zeros((N_PIXELS, 3), dtype=np.float32)
+            if not (0 <= i < sim.cfg.pixels):
+                raise ValueError(f"pixel index {i} out of range 0..{sim.cfg.pixels-1}")
+        p = np.zeros((sim.cfg.pixels, 3), dtype=np.float32)
         for i in idxs:
             p[i] = (255, 255, 255)
         sim.add(HoldPattern(p))
@@ -240,14 +242,14 @@ def handle(sim, cmd, arg):
     elif cmd == "comet":
         nodes = [int(x) for x in arg.split(",")]
         for n in nodes:
-            if not (0 <= n < N_PIXELS):
-                raise ValueError(f"node {n} out of range 0..{N_PIXELS-1}")
+            if not (0 <= n < sim.cfg.pixels):
+                raise ValueError(f"node {n} out of range 0..{sim.cfg.pixels-1}")
         sim.add(make_comet(sim.cfg, nodes))
         print(f"spawned comet {nodes}")
 
     elif cmd == "randcomet":
         k = int(arg) if arg else 3
-        nodes = [random.randint(0, N_PIXELS - 1) for _ in range(k)]
+        nodes = [random.randint(0, sim.cfg.pixels - 1) for _ in range(k)]
         sim.add(make_comet(sim.cfg, nodes))
         print(f"spawned random comet {nodes}")
 
@@ -278,7 +280,7 @@ def main():
     args = ap.parse_args()
 
     sim = Sim(args.config)
-    print(f"sim ready: {N_PIXELS} px, brightness={sim.cfg.brightness:.2f}")
+    print(f"sim ready: {sim.cfg.pixels} px, brightness={sim.cfg.brightness:.2f}")
     print("type 'help' for commands. Ctrl-D or 'q' to exit.")
     try:
         while True:

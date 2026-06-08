@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+# Default strip length. Override at startup with configure(n_pixels) — see
+# below — so all derived constants (_POSITIONS, _HEARTBEAT_PROFILE,
+# HEARTBEAT_CENTER) get rebuilt to match the actual hardware.
 N_PIXELS = 144
 
 # Base timings (config multipliers scale these)
@@ -20,20 +23,39 @@ SPARK_DURATION = 1.1
 WALKUP_BLOOM_DURATION = 1.5
 DIM_BLOOM_DURATION = 1.0
 HEARTBEAT_PERIOD = 4.0
-HEARTBEAT_CENTER = N_PIXELS // 2
 HEARTBEAT_WIDTH = 9
 HEARTBEAT_COLOR = np.array((20, 30, 40), dtype=np.float32)
 
+# These are rebuilt by configure(); leave the default-N_PIXELS values here so
+# import-time code (tests, smoke checks) keeps working without configure().
+HEARTBEAT_CENTER = N_PIXELS // 2
 _POSITIONS = np.arange(N_PIXELS, dtype=np.float32)
 
-# Precompute heartbeat spatial profile (raised-cosine bell, 9px wide)
-_HB_OFFSET = _POSITIONS - HEARTBEAT_CENTER
-_HB_HALF = HEARTBEAT_WIDTH / 2.0
-_HEARTBEAT_PROFILE = np.where(
-    np.abs(_HB_OFFSET) <= _HB_HALF,
-    0.5 * (1.0 + np.cos(np.pi * _HB_OFFSET / _HB_HALF)),
-    0.0,
-).astype(np.float32)
+
+def _make_heartbeat_profile(n, center, width):
+    pos = np.arange(n, dtype=np.float32) - center
+    half = width / 2.0
+    return np.where(
+        np.abs(pos) <= half,
+        0.5 * (1.0 + np.cos(np.pi * pos / half)),
+        0.0,
+    ).astype(np.float32)
+
+
+_HEARTBEAT_PROFILE = _make_heartbeat_profile(N_PIXELS, HEARTBEAT_CENTER, HEARTBEAT_WIDTH)
+
+
+def configure(n_pixels):
+    """Rebuild module state for a strip of n_pixels LEDs. Call ONCE at startup
+    after loading config and before spawning any animations. Reassigns the
+    module globals (N_PIXELS, HEARTBEAT_CENTER, _POSITIONS, _HEARTBEAT_PROFILE)
+    — Comet.render and render_heartbeat resolve these via the module namespace
+    at call time, so they pick up the new values."""
+    global N_PIXELS, HEARTBEAT_CENTER, _POSITIONS, _HEARTBEAT_PROFILE
+    N_PIXELS = int(n_pixels)
+    HEARTBEAT_CENTER = N_PIXELS // 2
+    _POSITIONS = np.arange(N_PIXELS, dtype=np.float32)
+    _HEARTBEAT_PROFILE = _make_heartbeat_profile(N_PIXELS, HEARTBEAT_CENTER, HEARTBEAT_WIDTH)
 
 
 def render_heartbeat(fb, t):

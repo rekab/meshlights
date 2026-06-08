@@ -158,6 +158,15 @@ Edit `config.toml` and restart the engine. Two values
 they're meant to be calibrated against an outdoor capture at the install site,
 not against indoor / desk data.
 
+### Strip length
+
+`strip.pixels` in `config.toml` is the actual number of LEDs on the strip
+you wired up. The original design target was 144, but real hardware varies —
+use `utils/sim.py` (`pixel 0`, `pixel <n//2>`, `pixel <n-1>`) to map your
+strip if you're not sure, then set `strip.pixels` to match. The heartbeat
+centers itself based on this value, and the repeater-to-pixel hash uses it
+as its modulus.
+
 ### Brightness / power tuning (battery operation)
 
 Defaults are tuned for a **2× 18650 USB power bank** (~2 A output, ~22 Wh

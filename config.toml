@@ -1,4 +1,10 @@
 [strip]
+# Number of LEDs on the physical strip. Set this to match your hardware
+# — the original design assumed 144, but this is whatever you actually
+# wired up. Drives framebuffer size, heartbeat centering, repeater→pixel
+# hash modulus.
+pixels = 70
+
 # Per-LED APA102 brightness, 0.0..1.0 (mapped to the 5-bit brightness byte
 # in hardware). 0.25 ≈ 8/31 — tuned for a 2-cell USB power bank, all-night
 # runtime, art-piece visibility (NOT room-lighting). Raise toward 1.0 if

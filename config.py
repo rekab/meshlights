@@ -20,6 +20,7 @@ WALKUP_COLOR = (255, 255, 255)   # reserved — never in PALETTE
 
 @dataclass(frozen=True)
 class Config:
+    pixels: int                  # actual LED count on the strip
     tail_length: float
     speed: float
     head_brightness: float
@@ -36,6 +37,7 @@ def load_config(path):
     strip = data.get("strip", {})
     bloom = data.get("bloom", {})
     return Config(
+        pixels=int(strip.get("pixels", 144)),
         tail_length=float(data["comet"]["tail_length"]),
         speed=float(data["comet"]["speed"]),
         head_brightness=float(data["comet"]["head_brightness"]),
@@ -49,11 +51,12 @@ def load_config(path):
 
 _PIX_CACHE = {}
 
-def byte_to_pixel(byte_hex):
-    p = _PIX_CACHE.get(byte_hex)
+def byte_to_pixel(byte_hex, n_pixels):
+    key = (byte_hex, n_pixels)
+    p = _PIX_CACHE.get(key)
     if p is None:
-        p = ((int(byte_hex, 16) * 2654435761) & 0xFFFFFFFF) % 144
-        _PIX_CACHE[byte_hex] = p
+        p = ((int(byte_hex, 16) * 2654435761) & 0xFFFFFFFF) % n_pixels
+        _PIX_CACHE[key] = p
     return p
 
 
