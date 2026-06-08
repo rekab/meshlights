@@ -20,8 +20,10 @@ same time.
 Commands (type at the > prompt; 'help' or '?' for this list):
   pixel N [color]      light up LED N (default white) — orientation test
   pixels N,N,N[...]    light up multiple LEDs (default white)
-  comet N1,N2,...      spawn a comet with explicit pixel-index path
-  randcomet K          spawn a comet with K random pixel positions
+  comet N1,N2,...           spawn a comet, default TXT_MSG colors (blue/gold)
+  comet TYPE N1,N2,...      spawn a comet with the given payload-type colors
+  randcomet K               K-node random comet, random payload type
+  randcomet K TYPE          K-node random comet, fixed payload type
   walkup               spawn a white walkup bloom
   dim [color]          spawn a dim bloom (default cyan)
   clear                kill all active animations (heartbeat resumes)
@@ -29,6 +31,9 @@ Commands (type at the > prompt; 'help' or '?' for this list):
   list                 list active animations + ages
   help | ?
   q | quit | exit
+
+  Valid TYPE names: REQ, RESPONSE, TXT_MSG, ACK, ADVERT, GRP_TXT,
+                    ANON_REQ, PATH
 """
 
 import random
@@ -55,7 +60,31 @@ from animations import (
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
     Bloom, Comet, render_heartbeat,
 )
-from config import WALKUP_COLOR, load_config
+from config import HEAD_PALETTE, PALETTE, UNKNOWN_HEAD_COLOR, WALKUP_COLOR, load_config
+
+
+# payload_type → human label, kept in sync with config.PALETTE for logging.
+PAYLOAD_LABELS = {
+    0x00: "REQ",      0x01: "RESPONSE", 0x02: "TXT_MSG",  0x03: "ACK",
+    0x04: "ADVERT",   0x05: "GRP_TXT",  0x07: "ANON_REQ", 0x08: "PATH",
+}
+_LABEL_TO_TYPE = {v: k for k, v in PAYLOAD_LABELS.items()}
+
+
+def _payload_type_from_label(label):
+    return _LABEL_TO_TYPE.get(label.upper())
+
+
+def _colors_for_type(ptype):
+    """Look up (tail_color, head_color, label) for a payload type. Defaults
+    to TXT_MSG (sky blue / warm gold) when ptype is None — matches what
+    make_comet defaulted to before payload types entered sim.py."""
+    if ptype is None:
+        ptype = 0x02   # TXT_MSG
+    tail = PALETTE.get(ptype)
+    head = HEAD_PALETTE.get(ptype, UNKNOWN_HEAD_COLOR)
+    label = PAYLOAD_LABELS.get(ptype, f"0x{ptype:02X}")
+    return tail, head, label
 from engine import setup_strip
 
 
@@ -244,18 +273,44 @@ def handle(sim, cmd, arg):
         print(f"lit pixels {idxs}")
 
     elif cmd == "comet":
-        nodes = [int(x) for x in arg.split(",")]
+        # `comet 5,30,60` (default TXT_MSG) or `comet ADVERT 5,30,60` (typed).
+        parts = arg.split(None, 1)
+        ptype = None
+        if len(parts) == 2:
+            label = parts[0].upper()
+            ptype = _payload_type_from_label(label)
+            if ptype is None:
+                raise ValueError(f"unknown payload type {label!r}; one of "
+                                 f"{sorted(PAYLOAD_LABELS.values())}")
+            node_str = parts[1]
+        else:
+            node_str = parts[0]
+        nodes = [int(x) for x in node_str.split(",")]
         for n in nodes:
             if not (0 <= n < sim.cfg.pixels):
                 raise ValueError(f"node {n} out of range 0..{sim.cfg.pixels-1}")
-        sim.add(make_comet(sim.cfg, nodes))
-        print(f"spawned comet {nodes}")
+        color, head_color, label = _colors_for_type(ptype)
+        sim.add(make_comet(sim.cfg, nodes, color=color, head_color=head_color))
+        print(f"spawned {label} comet {nodes}")
 
     elif cmd == "randcomet":
-        k = int(arg) if arg else 3
+        # `randcomet K` (K random pixel positions, random payload type) or
+        # `randcomet K TYPE` (K random positions, fixed type).
+        parts = arg.split(None, 1) if arg else []
+        k = int(parts[0]) if parts else 3
+        ptype = None
+        if len(parts) == 2:
+            label = parts[1].upper()
+            ptype = _payload_type_from_label(label)
+            if ptype is None:
+                raise ValueError(f"unknown payload type {label!r}; one of "
+                                 f"{sorted(PAYLOAD_LABELS.values())}")
+        else:
+            ptype = random.choice(list(PALETTE.keys()))
         nodes = [random.randint(0, sim.cfg.pixels - 1) for _ in range(k)]
-        sim.add(make_comet(sim.cfg, nodes))
-        print(f"spawned random comet {nodes}")
+        color, head_color, label = _colors_for_type(ptype)
+        sim.add(make_comet(sim.cfg, nodes, color=color, head_color=head_color))
+        print(f"spawned random {label} comet {nodes}")
 
     elif cmd == "walkup":
         sim.add(make_walkup(sim.cfg))
