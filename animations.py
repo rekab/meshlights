@@ -63,7 +63,7 @@ def render_heartbeat(fb, t):
     fb += HEARTBEAT_COLOR * _HEARTBEAT_PROFILE[:, None] * breath
 
 
-@dataclass
+@dataclass(eq=False)
 class Bloom:
     """Dim full-strip pulse for hop-0 packets that don't meet the walk-up
     threshold. Solid color, sin-envelope rise-and-fall. The dramatic
@@ -86,7 +86,7 @@ class Bloom:
         return (t - self.start_time) >= self.duration
 
 
-@dataclass
+@dataclass(eq=False)
 class Walkup:
     """Walk-up showpiece: two white pulses traverse the strip from opposite
     ends, sum constructively where they overlap (peak amplification at the
@@ -130,7 +130,7 @@ class Walkup:
         return (t - self.start_time) >= self.duration
 
 
-@dataclass
+@dataclass(eq=False)
 class Comet:
     nodes: np.ndarray        # int64 array of pixel positions, length n
     color: np.ndarray        # float32 RGB — tail / payload-type color
