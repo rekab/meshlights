@@ -23,9 +23,9 @@ dim_peak = 0.25
 # then fades out. Slow / oscillating heads naturally produce short trails;
 # fast / wide-ranging heads produce long ones. Trail can never extend past
 # pixels the head has actually visited.
-tail_duration = 1.0
-speed = 0.5                # global speed multiplier (affects dwell+transit)
-head_brightness = 1.4      # multiplier on head intensity
+tail_duration = 0.1
+speed = 1.2                # global speed multiplier (affects dwell+transit)
+head_brightness = 2.0      # multiplier on head intensity
 
 [walkup]
 rssi_threshold = -45       # PLACEHOLDER — calibrate against rooftop capture, NOT desk data
