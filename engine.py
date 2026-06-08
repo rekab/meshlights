@@ -31,7 +31,7 @@ except ImportError as e:
 
 import animations
 from config import (
-    PALETTE, UNKNOWN_COLOR, WALKUP_COLOR,
+    HEAD_PALETTE, PALETTE, UNKNOWN_COLOR, UNKNOWN_HEAD_COLOR, WALKUP_COLOR,
     byte_to_pixel, load_config, rssi_to_intensity,
 )
 from animations import (
@@ -78,7 +78,9 @@ class Engine:
             return
 
         color = PALETTE.get(payload_type, UNKNOWN_COLOR)
+        head_color = HEAD_PALETTE.get(payload_type, UNKNOWN_HEAD_COLOR)
         color_arr = np.array(color, dtype=np.float32)
+        head_color_arr = np.array(head_color, dtype=np.float32)
         intensity = rssi_to_intensity(rssi, self.cfg.rssi_ramp_gamma)
         kind = "?"
 
@@ -122,6 +124,7 @@ class Engine:
             self.active.append(Comet(
                 nodes=nodes,
                 color=color_arr,
+                head_color=head_color_arr,
                 intensity=intensity,
                 tail_length=BASE_TAIL * self.cfg.tail_length,
                 dwell=BASE_DWELL / self.cfg.speed,

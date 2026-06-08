@@ -17,6 +17,22 @@ PALETTE = {
 UNKNOWN_COLOR = (150, 150, 150)
 WALKUP_COLOR = (255, 255, 255)   # reserved — never in PALETTE
 
+# Comet HEAD accent colors. Each entry is the complementary/contrasting
+# hue to its PALETTE counterpart — picked to pop visually against the
+# tail while still being aesthetically pleasing (no clashing primaries).
+# Used at the head pixel and at the "resting" node during dwell.
+HEAD_PALETTE = {
+    0x00: (90,  180, 255),   # REQ      — cool blue head over warm orange tail
+    0x01: (255, 230, 130),   # RESPONSE — gold head over violet tail
+    0x02: (255, 200, 90 ),   # TXT_MSG  — warm gold head over sky blue tail
+    0x03: (200, 130, 255),   # ACK      — lavender head over pale yellow tail
+    0x04: (255, 140, 220),   # ADVERT   — pink head over mint green tail
+    0x05: (255, 200, 90 ),   # GRP_TXT  — warm gold head over sky blue tail
+    0x07: (100, 180, 255),   # ANON_REQ — cool blue head over deep orange tail
+    0x08: (255, 180, 100),   # PATH     — peach head over cyan tail
+}
+UNKNOWN_HEAD_COLOR = (255, 240, 200)   # warm cream (avoid pure white — that's reserved for walk-ups)
+
 
 @dataclass(frozen=True)
 class Config:

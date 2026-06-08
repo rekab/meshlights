@@ -95,10 +95,14 @@ class HoldPattern:
         return False
 
 
-def make_comet(cfg, nodes, color=(60, 150, 255), intensity=0.8):
+def make_comet(cfg, nodes, color=(60, 150, 255), head_color=(255, 200, 90),
+               intensity=0.8):
+    # Defaults match the TXT_MSG / GRP_TXT pair from config.PALETTE +
+    # config.HEAD_PALETTE — sky blue tail, warm gold head.
     return Comet(
         nodes=np.array(nodes, dtype=np.int64),
         color=np.array(color, dtype=np.float32),
+        head_color=np.array(head_color, dtype=np.float32),
         intensity=intensity,
         tail_length=BASE_TAIL * cfg.tail_length,
         dwell=BASE_DWELL / cfg.speed,

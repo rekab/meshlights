@@ -86,12 +86,13 @@ class Bloom:
 @dataclass
 class Comet:
     nodes: np.ndarray        # int64 array of pixel positions, length n
-    color: np.ndarray        # float32 RGB
+    color: np.ndarray        # float32 RGB — tail / payload-type color
+    head_color: np.ndarray   # float32 RGB — accent color at the head pixel
     intensity: float
-    tail_length: float       # pixels
+    tail_length: float       # pixels — max tail length when fully extended
     dwell: float
     transit: float
-    head_brightness: float
+    head_brightness: float   # multiplier on head pixel only (not tail)
     start_time: float
     last_direction: float = 1.0
     sparks: list = field(default_factory=list)   # list[(pixel:int, t_spawn:float)]
@@ -124,11 +125,16 @@ class Comet:
         final_dwell_start = (n - 1) * cycle
         final_dwell_end = final_dwell_start + self.dwell
 
-        # Head position + visibility. Explicit tri-branch with the final dwell
-        # carved out so we never read nodes[k+1] past the end.
+        # Head position + visibility + current tail length. Explicit tri-branch
+        # with the final dwell carved out so we never read nodes[k+1] past the
+        # end. Tail length contracts during dwell (catches up to the head) and
+        # extends during transit (matches head's smoothstep easing) — boundary
+        # values are continuous (0 at dwell-end == transit-start, full at
+        # transit-end == next dwell-start) so there's no visible snap.
         head_visible = True
         head_pos = 0.0
         direction = self.last_direction
+        tail_length_now = 0.0
 
         if elapsed >= final_dwell_end:
             head_visible = False
@@ -136,6 +142,8 @@ class Comet:
         elif elapsed >= final_dwell_start:
             # Final dwell — sit on last node; do NOT index nodes[k+1].
             head_pos = float(self.nodes[-1])
+            dwell_progress = (elapsed - final_dwell_start) / self.dwell
+            tail_length_now = self.tail_length * max(0.0, 1.0 - dwell_progress)
             self._ensure_sparks_through(n - 1)
         else:
             k = int(elapsed // cycle)            # guarded: k <= n - 2 here
@@ -146,12 +154,16 @@ class Comet:
             self.last_direction = direction
             if s < self.dwell:
                 head_pos = float(self.nodes[k])
+                dwell_progress = s / self.dwell
+                tail_length_now = self.tail_length * (1.0 - dwell_progress)
             else:
                 f = (s - self.dwell) / self.transit
                 f_e = f * f * (3.0 - 2.0 * f)
                 head_pos = float(self.nodes[k]) + d * f_e
+                tail_length_now = self.tail_length * f_e
 
-        # Sparks (vectorized fade + scatter add)
+        # Sparks (vectorized fade + scatter add) — persistent route trail
+        # stays in the tail/payload color, not the head accent.
         if self.sparks:
             n_sp = len(self.sparks)
             pix = np.empty(n_sp, dtype=np.int64)
@@ -169,17 +181,37 @@ class Comet:
             if not alive.all():
                 self.sparks = [s for s, ok in zip(self.sparks, alive) if ok]
 
-        # Tail + head — only when head is visible
-        if head_visible and self.tail_length > 0.0:
+        if not head_visible:
+            return
+
+        n_px = _POSITIONS.shape[0]
+
+        # Tail — from one pixel behind the head out to `tail_length_now`,
+        # quadratic fade. Starts at dist=1 (not 0) so the head pixel stays
+        # purely in head_color, preserving the head/tail color contrast.
+        # Skipped entirely when the tail has contracted below one pixel.
+        if tail_length_now > 1.0:
             dist = (head_pos - _POSITIONS) * direction
-            mask = (dist >= 0.0) & (dist <= self.tail_length)
+            mask = (dist >= 1.0) & (dist <= tail_length_now)
             if mask.any():
-                brightness = np.where(
+                span = max(tail_length_now - 1.0, 1e-6)
+                fade = np.where(
                     mask,
-                    (1.0 - dist / self.tail_length) ** 2,
+                    (1.0 - (dist - 1.0) / span) ** 2,
                     0.0,
                 ).astype(np.float32)
-                fb += self.color * brightness[:, None] * (self.head_brightness * self.intensity)
+                fb += self.color * fade[:, None] * self.intensity
+
+        # Head — anti-aliased single pixel at head_pos in head_color.
+        # head_brightness multiplier applies HERE only (not on tail), so the
+        # accent really pops.
+        head_int = int(head_pos)
+        head_frac = float(head_pos) - head_int
+        head_amp = self.head_brightness * self.intensity
+        if 0 <= head_int < n_px:
+            fb[head_int] += self.head_color * ((1.0 - head_frac) * head_amp)
+        if head_frac > 0.0 and 0 <= head_int + 1 < n_px:
+            fb[head_int + 1] += self.head_color * (head_frac * head_amp)
 
     def is_done(self, t):
         elapsed = t - self.start_time
