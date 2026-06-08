@@ -89,11 +89,11 @@ class Bloom:
 @dataclass
 class Walkup:
     """Walk-up showpiece: two white pulses traverse the strip from opposite
-    ends, meeting at the center with destructive interference. Rendered as
-    |wave1 - wave2| * sin(pi*tn) — where the pulses fully overlap they
-    cancel to zero (momentary blackout), where they don't they sum to
-    visible brightness. Reads as two waves crashing through each other
-    rather than the old solid pulse."""
+    ends, sum constructively where they overlap (peak amplification at the
+    center as they cross), then continue past each other to the opposite
+    ends. Rendered as (wave1 + wave2) * sin(pi*tn) * peak — additive, so
+    the meeting moment is a bright flash, not a blackout. Reads as two
+    waves passing through each other and amplifying as they cross."""
     color: np.ndarray            # typically WALKUP_COLOR (white)
     peak: float                  # amplitude multiplier
     duration: float
@@ -117,14 +117,12 @@ class Walkup:
         wave1 = np.exp(-((positions - pos1) ** 2) / two_sigma_sq)
         wave2 = np.exp(-((positions - pos2) ** 2) / two_sigma_sq)
 
-        # Subtraction → destructive interference at the meeting point.
-        # abs() so each pulse stays visible on its own side (where the
-        # other wave is ~0); they cancel only where both have significant
-        # amplitude, i.e. when overlapping near the strip's center.
-        combined = np.abs(wave1 - wave2)
-        # Outer sin envelope: bloom emerges, peaks at mid-duration (which
-        # is also the cancellation moment → strip momentarily goes black),
-        # then recedes to nothing by end of duration.
+        # Constructive interference: at the meeting point both gaussians
+        # overlap fully, sum to 2× peak amplitude — bright flash where
+        # they cross. Outer sin envelope adds graceful fade-in / fade-out
+        # so the pulses don't snap on at full intensity at tn=0 or
+        # suddenly cut off at tn=1.
+        combined = wave1 + wave2
         env = math.sin(math.pi * tn)
         fb += self.color * (combined * env * self.peak)[:, None]
 
