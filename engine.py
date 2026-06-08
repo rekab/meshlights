@@ -12,6 +12,7 @@ import asyncio
 import signal
 import sys
 import time
+import traceback
 
 import numpy as np
 
@@ -61,6 +62,10 @@ class Engine:
         # Suppression window for own keepalive adverts (echo back as RX).
         self.keepalive_until = 0.0
         self.rx_count = 0
+        # Liveness counters — surfaced by the alive-log task and used to
+        # detect a frozen render loop (previously these silently died on an
+        # animation exception, leaving the strip stuck on its last frame).
+        self.render_count = 0
 
     def on_rx(self, ev):
         p = ev.payload or {}
@@ -145,34 +150,78 @@ class Engine:
     async def render_loop(self, strip, pixel_view):
         fb = np.zeros((self.cfg.pixels, 3), dtype=np.float32)
         while not self.shutdown.is_set():
-            t = time.monotonic()
-            fb.fill(0.0)
-            if self.active:
-                for obj in list(self.active):
-                    obj.render(fb, t)
-                    if obj.is_done(t):
-                        self.active.remove(obj)
-                target_dt = 1.0 / 60.0
-            else:
-                render_heartbeat(fb, t)
-                target_dt = 1.0 / 10.0
-
-            np.clip(fb, 0.0, 255.0, out=fb)
-            fb_u8 = fb.astype(np.uint8)
-            # Vectorized write into the DotStar buffer (no per-pixel Python loop).
-            pixel_view[:, 1] = fb_u8[:, 2]   # B
-            pixel_view[:, 2] = fb_u8[:, 1]   # G
-            pixel_view[:, 3] = fb_u8[:, 0]   # R
             try:
-                strip.show()
+                t = time.monotonic()
+                fb.fill(0.0)
+                if self.active:
+                    for obj in list(self.active):
+                        # Per-animation try/except: a broken Comet/Bloom/Walkup
+                        # can't take down the loop. Log the traceback, drop the
+                        # bad object from active so we don't keep crashing on it.
+                        try:
+                            obj.render(fb, t)
+                            if obj.is_done(t):
+                                self.active.remove(obj)
+                        except Exception as e:
+                            print(f"render error on {type(obj).__name__}: {e}",
+                                  file=sys.stderr)
+                            traceback.print_exc()
+                            try:
+                                self.active.remove(obj)
+                            except ValueError:
+                                pass
+                    target_dt = 1.0 / 60.0
+                else:
+                    render_heartbeat(fb, t)
+                    target_dt = 1.0 / 10.0
+
+                np.clip(fb, 0.0, 255.0, out=fb)
+                fb_u8 = fb.astype(np.uint8)
+                # Vectorized write into the DotStar buffer (no per-pixel Python loop).
+                pixel_view[:, 1] = fb_u8[:, 2]   # B
+                pixel_view[:, 2] = fb_u8[:, 1]   # G
+                pixel_view[:, 3] = fb_u8[:, 0]   # R
+                try:
+                    strip.show()
+                except Exception as e:
+                    print(f"strip.show() failed: {e}", file=sys.stderr)
+
+                self.render_count += 1
+
+                try:
+                    await asyncio.wait_for(self.new_packet.wait(), timeout=target_dt)
+                except asyncio.TimeoutError:
+                    pass
+                self.new_packet.clear()
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                print(f"strip.show() failed: {e}", file=sys.stderr)
+                # Loop-body backstop: anything not caught above gets logged and
+                # we keep going. Without this, asyncio swallows the exception,
+                # the task dies, and the strip freezes on its last frame while
+                # on_rx keeps printing packets — exactly the symptom we hit.
+                print(f"render loop body error: {e}", file=sys.stderr)
+                traceback.print_exc()
+                await asyncio.sleep(0.1)
 
+    async def alive_log(self, period=30.0):
+        """Periodic liveness log — if render_count stops advancing, the loop
+        is frozen even though the event loop is still alive."""
+        start = time.monotonic()
+        last_render = -1
+        while not self.shutdown.is_set():
             try:
-                await asyncio.wait_for(self.new_packet.wait(), timeout=target_dt)
+                await asyncio.wait_for(self.shutdown.wait(), timeout=period)
             except asyncio.TimeoutError:
                 pass
-            self.new_packet.clear()
+            if self.shutdown.is_set():
+                break
+            dur = time.monotonic() - start
+            stalled = " (RENDER STALLED!)" if self.render_count == last_render else ""
+            print(f"... alive {dur:.0f}s  rx={self.rx_count}  "
+                  f"render={self.render_count}  active={len(self.active)}{stalled}",
+                  file=sys.stderr)
+            last_render = self.render_count
 
 
 def setup_strip(brightness, n_pixels):
@@ -282,7 +331,24 @@ async def main():
                 break
             await send_keepalive(mc, engine, "keepalive")
 
-    tasks = [asyncio.create_task(engine.render_loop(strip, pixel_view))]
+    def _render_died(task):
+        # If the render task ever exits while we're not shutting down,
+        # log loudly (asyncio normally swallows task exceptions) and trip
+        # shutdown so the user notices instead of staring at a frozen strip.
+        if engine.shutdown.is_set():
+            return
+        exc = task.exception() if not task.cancelled() else None
+        if exc is not None:
+            print(f"\nFATAL: render loop crashed: {exc!r}", file=sys.stderr)
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
+        else:
+            print("\nFATAL: render loop exited unexpectedly "
+                  "(no exception)", file=sys.stderr)
+        engine.shutdown.set()
+
+    render_task = asyncio.create_task(engine.render_loop(strip, pixel_view))
+    render_task.add_done_callback(_render_died)
+    tasks = [render_task, asyncio.create_task(engine.alive_log())]
     if not args.no_keepalive and args.keepalive_sec > 0:
         tasks.append(asyncio.create_task(keepalive_worker()))
 
