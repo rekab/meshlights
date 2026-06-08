@@ -188,16 +188,31 @@ class Comet:
         if self._trail_times is None or self._trail_times.shape[0] != n_px:
             self._trail_times = np.full(n_px, -1e9, dtype=np.float64)
 
-        # Mark the trail. We stamp every integer pixel SWEPT between the
-        # previous and current head_pos with the current time — not just the
-        # head pixel — so fast heads (movement > 1 px/frame) don't leave
-        # gaps. A 70-px sweep over a 0.5s transit covers ~2.3 px per frame
-        # at 60fps; without span-marking, every-other pixel gets skipped and
-        # the tail looks like a discrete 2-px blob. Only mark when the head
-        # is visible; after final_dwell_end the trail just fades out.
+        # Compute head positioning + anti-aliased weights up front. head_w0
+        # and head_w1 are how much of the head color goes to head_int and
+        # head_int+1 respectively; they sum to 1.0. Trail renders at the
+        # COMPLEMENT of these weights at the same pixels — so as the head
+        # moves off a pixel, head's contribution fades out while trail's
+        # contribution fades in, keeping total brightness monotonic across
+        # the boundary. Without this, slow head motion produces a visible
+        # "pop": pixel dims to almost 0 as head_w → 0, then snaps back to
+        # full trail brightness the moment head_int increments.
+        head_int = -1
+        head_frac = 0.0
+        head_w0 = 0.0
+        head_w1 = 0.0
         if head_visible:
             head_int = int(head_pos)
             head_frac = float(head_pos) - head_int
+            head_w0 = 1.0 - head_frac
+            head_w1 = head_frac
+
+            # Mark every integer pixel SWEPT between the previous and current
+            # head_pos with the current time — not just the head pixel — so
+            # fast heads (movement > 1 px/frame) don't leave gaps. A 70-px
+            # sweep over a 0.5s transit covers ~2.3 px per frame at 60fps;
+            # without span-marking, every-other pixel gets skipped and the
+            # tail looks like a discrete 2-px blob.
             prev = self._prev_head_pos
             lo = head_pos if prev is None else min(prev, head_pos)
             hi = head_pos if prev is None else max(prev, head_pos)
@@ -207,33 +222,36 @@ class Comet:
                 self._trail_times[p_start:p_end + 1] = t
             self._prev_head_pos = head_pos
 
-        # Render trail with temporal quadratic fade. Mask out the head pixel(s)
-        # so they only carry the head accent color, not tail color too.
+        # Render trail with temporal quadratic fade. At the head pixel(s),
+        # scale by the complement of head's anti-aliased weight so the head
+        # accent stays pure where the head is, and the trail "fills in" as
+        # the head moves off — net brightness change at any pixel is
+        # monotonic across the head's traversal.
         trail_age = t - self._trail_times
         trail_alive = trail_age < self.tail_duration
-        if head_visible:
-            if 0 <= head_int < n_px:
-                trail_alive[head_int] = False
-            if head_frac > 0.0 and 0 <= head_int + 1 < n_px:
-                trail_alive[head_int + 1] = False
         if trail_alive.any():
             trail_fade = np.where(
                 trail_alive,
                 (1.0 - trail_age / self.tail_duration) ** 2,
                 0.0,
             ).astype(np.float32)
+            if head_visible:
+                if 0 <= head_int < n_px:
+                    trail_fade[head_int] *= (1.0 - head_w0)
+                if head_w1 > 0.0 and 0 <= head_int + 1 < n_px:
+                    trail_fade[head_int + 1] *= (1.0 - head_w1)
             fb += self.color * trail_fade[:, None] * self.intensity
 
         if not head_visible:
             return
 
-        # Head — anti-aliased single pixel at head_pos in head_color.
-        # head_brightness multiplier applies HERE only (not on the trail).
+        # Render head with anti-aliased weights. head_brightness multiplier
+        # applies HERE only (not on the trail).
         head_amp = self.head_brightness * self.intensity
         if 0 <= head_int < n_px:
-            fb[head_int] += self.head_color * ((1.0 - head_frac) * head_amp)
-        if head_frac > 0.0 and 0 <= head_int + 1 < n_px:
-            fb[head_int + 1] += self.head_color * (head_frac * head_amp)
+            fb[head_int] += self.head_color * (head_w0 * head_amp)
+        if head_w1 > 0.0 and 0 <= head_int + 1 < n_px:
+            fb[head_int + 1] += self.head_color * (head_w1 * head_amp)
 
     def is_done(self, t):
         elapsed = t - self.start_time
