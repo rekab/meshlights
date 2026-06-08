@@ -104,6 +104,10 @@ class Comet:
     # fast / wide-ranging heads produce long ones. Means the tail can never
     # extend past where the head has actually been.
     _trail_times: np.ndarray = None
+    # Previous frame's head_pos — used to mark the SWEPT span (not just the
+    # current pixel) into the trail each frame, so fast heads (head moving
+    # > 1 px/frame) don't leave gaps in the trail.
+    _prev_head_pos: float = None
 
     def __post_init__(self):
         if len(self.nodes) == 0:
@@ -184,17 +188,24 @@ class Comet:
         if self._trail_times is None or self._trail_times.shape[0] != n_px:
             self._trail_times = np.full(n_px, -1e9, dtype=np.float64)
 
-        # Mark the head's current position into the trail. Anti-aliased into
-        # floor + ceil so sub-pixel motion still registers as continuous
-        # coverage. Only mark when the head is visible; after final_dwell_end
-        # the trail just fades out, no new marks.
+        # Mark the trail. We stamp every integer pixel SWEPT between the
+        # previous and current head_pos with the current time — not just the
+        # head pixel — so fast heads (movement > 1 px/frame) don't leave
+        # gaps. A 70-px sweep over a 0.5s transit covers ~2.3 px per frame
+        # at 60fps; without span-marking, every-other pixel gets skipped and
+        # the tail looks like a discrete 2-px blob. Only mark when the head
+        # is visible; after final_dwell_end the trail just fades out.
         if head_visible:
             head_int = int(head_pos)
             head_frac = float(head_pos) - head_int
-            if 0 <= head_int < n_px:
-                self._trail_times[head_int] = t
-            if head_frac > 0.0 and 0 <= head_int + 1 < n_px:
-                self._trail_times[head_int + 1] = t
+            prev = self._prev_head_pos
+            lo = head_pos if prev is None else min(prev, head_pos)
+            hi = head_pos if prev is None else max(prev, head_pos)
+            p_start = max(0, int(math.floor(lo)))
+            p_end = min(n_px - 1, int(math.ceil(hi)))
+            if p_end >= p_start:
+                self._trail_times[p_start:p_end + 1] = t
+            self._prev_head_pos = head_pos
 
         # Render trail with temporal quadratic fade. Mask out the head pixel(s)
         # so they only carry the head accent color, not tail color too.
