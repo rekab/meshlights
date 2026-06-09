@@ -60,15 +60,10 @@ from animations import (
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
     Bloom, Comet, Walkup, render_heartbeat,
 )
-from config import HEAD_PALETTE, PALETTE, UNKNOWN_HEAD_COLOR, WALKUP_COLOR, load_config
-
-
-# payload_type → human label, kept in sync with config.PALETTE for logging.
-PAYLOAD_LABELS = {
-    0x00: "REQ",      0x01: "RESPONSE", 0x02: "TXT_MSG",  0x03: "ACK",
-    0x04: "ADVERT",   0x05: "GRP_TXT",  0x06: "GRP_DATA", 0x07: "ANON_REQ",
-    0x08: "PATH",
-}
+from config import (
+    HEAD_PALETTE, PALETTE, PAYLOAD_LABELS,
+    UNKNOWN_HEAD_COLOR, WALKUP_COLOR, load_config,
+)
 _LABEL_TO_TYPE = {v: k for k, v in PAYLOAD_LABELS.items()}
 
 

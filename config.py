@@ -77,6 +77,19 @@ def load_config(path):
     )
 
 
+# payload_type → human label. Single source of truth, imported by both
+# engine.py (for the debug RX log line) and utils/sim.py (for the
+# `comet TYPE ...` / `randcomet K TYPE` parser). Keep in sync with
+# PALETTE / HEAD_PALETTE — types listed here but missing from the
+# palettes will render gray-white (UNKNOWN_COLOR fallback).
+PAYLOAD_LABELS = {
+    0x00: "REQ",      0x01: "RESPONSE",  0x02: "TXT_MSG",   0x03: "ACK",
+    0x04: "ADVERT",   0x05: "GRP_TXT",   0x06: "GRP_DATA",  0x07: "ANON_REQ",
+    0x08: "PATH",     0x09: "TRACE",     0x0A: "MULTIPART", 0x0B: "CONTROL",
+    0x0F: "RAW_CUSTOM",
+}
+
+
 _PIX_CACHE = {}
 
 def byte_to_pixel(byte_hex, n_pixels):

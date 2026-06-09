@@ -32,8 +32,8 @@ except ImportError as e:
 
 import animations
 from config import (
-    HEAD_PALETTE, PALETTE, UNKNOWN_COLOR, UNKNOWN_HEAD_COLOR, WALKUP_COLOR,
-    byte_to_pixel, load_config, rssi_to_intensity,
+    HEAD_PALETTE, PALETTE, PAYLOAD_LABELS, UNKNOWN_COLOR, UNKNOWN_HEAD_COLOR,
+    WALKUP_COLOR, byte_to_pixel, load_config, rssi_to_intensity,
 )
 from animations import (
     BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
@@ -43,13 +43,6 @@ from animations import (
 
 
 PAYLOAD_ADVERT = 0x04
-
-PAYLOAD_LABELS = {
-    0x00: "REQ", 0x01: "RESPONSE", 0x02: "TXT_MSG", 0x03: "ACK",
-    0x04: "ADVERT", 0x05: "GRP_TXT", 0x06: "GRP_DATA", 0x07: "ANON_REQ",
-    0x08: "PATH", 0x09: "TRACE", 0x0A: "MULTIPART", 0x0B: "CONTROL",
-    0x0F: "RAW_CUSTOM",
-}
 
 
 class Engine:
