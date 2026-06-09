@@ -268,12 +268,16 @@ class Comet:
             # fast heads (movement > 1 px/frame) don't leave gaps. A 70-px
             # sweep over a 0.5s transit covers ~2.3 px per frame at 60fps;
             # without span-marking, every-other pixel gets skipped and the
-            # tail looks like a discrete 2-px blob.
+            # tail looks like a discrete 2-px blob. Both endpoints use FLOOR
+            # so we only mark pixels the head has actually been inside —
+            # using ceil(max) was over-marking by one pixel in the direction
+            # of motion, painting trail color one pixel AHEAD of where the
+            # head had reached (visually: trail "running over" the head).
             prev = self._prev_head_pos
             lo = head_pos if prev is None else min(prev, head_pos)
             hi = head_pos if prev is None else max(prev, head_pos)
             p_start = max(0, int(math.floor(lo)))
-            p_end = min(n_px - 1, int(math.ceil(hi)))
+            p_end = min(n_px - 1, int(math.floor(hi)))
             if p_end >= p_start:
                 self._trail_times[p_start:p_end + 1] = t
             self._prev_head_pos = head_pos
