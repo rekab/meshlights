@@ -43,7 +43,7 @@ HEAD_PALETTE = {
     0x03: ( 50,   0, 127),   # ACK      head: indigo     (complement of amber)
     0x04: (127,   0,  60),   # ADVERT   head: pink       (complement of green)
     0x05: (  0, 127,  50),   # GRP_TXT  head: green      (complement of magenta)
-    0x06: (127,   0, 110),   # GRP_DATA head: hot pink   (complement of teal)
+    0x06: (127,   0,  80),   # GRP_DATA head: rose pink  (complement of teal)
     0x07: (  0, 110, 127),   # ANON_REQ head: cyan       (complement of red)
     0x08: (127,  60,   0),   # PATH     head: orange     (complement of cyan)
     0x09: (127,  80,  30),   # TRACE    head: warm coral (complement of sky-blue)
