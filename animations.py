@@ -209,8 +209,15 @@ class Comet:
                 f_e = f * f * (3.0 - 2.0 * f)
                 head_pos = float(self.nodes[k]) + d * f_e
 
-        # Sparks (vectorized fade + scatter add) — persistent route trail
-        # stays in the tail/payload color, not the head accent.
+        # Sparks (vectorized fade + scatter add) render in HEAD color at
+        # head's brightness — semantically the spark is the memory of the
+        # head having rested at that node, so it carries the head accent,
+        # not the tail/payload color. This also fixes muddy-dwell: at a
+        # dwell node both the head and its just-emitted spark land on the
+        # same pixel; if the spark were in tail color, head + spark sum
+        # would mix the two complementary palette colors and wash out
+        # (e.g. GRP_DATA head pink + spark teal → cyan-white). With the
+        # spark in head color, the sum is just brighter head color.
         if self.sparks:
             n_sp = len(self.sparks)
             pix = np.empty(n_sp, dtype=np.int64)
@@ -223,7 +230,8 @@ class Comet:
                 ap = pix[alive]
                 aa = ages[alive].astype(np.float32)
                 fade = (1.0 - aa / SPARK_DURATION) ** 2
-                np.add.at(fb, ap, self.color * fade[:, None] * self.intensity)
+                amp = self.head_brightness * self.intensity
+                np.add.at(fb, ap, self.head_color * (fade * amp)[:, None])
             # prune dead sparks (cheap; n is bounded by hop count)
             if not alive.all():
                 self.sparks = [s for s, ok in zip(self.sparks, alive) if ok]
