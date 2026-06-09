@@ -17,6 +17,7 @@ PALETTE = {
     0x03: (255, 220,   0),   # ACK      — pure amber     (52°)
     0x04: ( 40, 255,   0),   # ADVERT   — pure green     (130°)
     0x05: (255,   0, 180),   # GRP_TXT  — hot magenta    (318°)
+    0x06: (  0, 240, 160),   # GRP_DATA — teal           (160°)
     0x07: (255,   0,  30),   # ANON_REQ — pure red       (7°)
     0x08: (  0, 220, 255),   # PATH     — pure cyan      (188°)
 }
@@ -38,6 +39,7 @@ HEAD_PALETTE = {
     0x03: ( 50,   0, 127),   # ACK      head: indigo     (complement of amber)
     0x04: (127,   0,  60),   # ADVERT   head: pink       (complement of green)
     0x05: (  0, 127,  50),   # GRP_TXT  head: green      (complement of magenta)
+    0x06: (127,   0,  42),   # GRP_DATA head: hot pink   (complement of teal)
     0x07: (  0, 110, 127),   # ANON_REQ head: cyan       (complement of red)
     0x08: (127,  60,   0),   # PATH     head: orange     (complement of cyan)
 }
