@@ -20,6 +20,10 @@ PALETTE = {
     0x06: (  0, 240, 160),   # GRP_DATA — teal           (160°)
     0x07: (255,   0,  30),   # ANON_REQ — pure red       (7°)
     0x08: (  0, 220, 255),   # PATH     — pure cyan      (188°)
+    0x09: ( 50, 180, 255),   # TRACE    — sky-blue       (207°)
+    0x0A: ( 90,  50, 255),   # MULTIPART— indigo         (248°)
+    0x0B: (180, 255,  50),   # CONTROL  — chartreuse     (89°)
+    0x0F: (255,  80, 140),   # RAW_CUSTOM — rose         (341°)
 }
 UNKNOWN_COLOR = (110, 110, 110)        # neutral gray (no hue claim for unknown types)
 WALKUP_COLOR = (255, 255, 255)         # reserved — never in PALETTE
@@ -42,6 +46,10 @@ HEAD_PALETTE = {
     0x06: (127,   0, 110),   # GRP_DATA head: hot pink   (complement of teal)
     0x07: (  0, 110, 127),   # ANON_REQ head: cyan       (complement of red)
     0x08: (127,  60,   0),   # PATH     head: orange     (complement of cyan)
+    0x09: (127,  80,  30),   # TRACE    head: warm coral (complement of sky-blue)
+    0x0A: (110, 127,   0),   # MULTIPART head: lime-gold (complement of indigo)
+    0x0B: ( 75,   0, 127),   # CONTROL  head: deep purple(complement of chartreuse)
+    0x0F: ( 40, 127,  80),   # RAW_CUSTOM head: teal-green (complement of rose)
 }
 UNKNOWN_HEAD_COLOR = (100, 100, 100)   # neutral gray (matches UNKNOWN_COLOR; avoid white which is reserved for walk-ups)
 
