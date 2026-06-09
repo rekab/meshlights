@@ -59,6 +59,11 @@ class Engine:
         # detect a frozen render loop (previously these silently died on an
         # animation exception, leaving the strip stuck on its last frame).
         self.render_count = 0
+        # Monotonic time when the active list became empty. Reset to None
+        # when comets are running. render_heartbeat() uses the elapsed idle
+        # time to fade itself in over HEARTBEAT_FADE_IN seconds so the strip
+        # doesn't snap to full brightness when a comet finishes.
+        self.idle_since = None
 
     def on_rx(self, ev):
         p = ev.payload or {}
@@ -163,9 +168,12 @@ class Engine:
                                 self.active.remove(obj)
                             except ValueError:
                                 pass
+                    self.idle_since = None
                     target_dt = 1.0 / 60.0
                 else:
-                    render_heartbeat(fb, t)
+                    if self.idle_since is None:
+                        self.idle_since = t
+                    render_heartbeat(fb, t, self.idle_since)
                     target_dt = 1.0 / 10.0
 
                 np.clip(fb, 0.0, 255.0, out=fb)

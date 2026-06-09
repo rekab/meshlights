@@ -22,9 +22,27 @@ BASE_TAIL_DURATION = 0.2     # seconds — base time a visited pixel stays lit b
 SPARK_DURATION = 1.1
 WALKUP_BLOOM_DURATION = 1.5
 DIM_BLOOM_DURATION = 1.0
-HEARTBEAT_PERIOD = 4.0
-HEARTBEAT_WIDTH = 9
-HEARTBEAT_COLOR = np.array((20, 30, 40), dtype=np.float32)
+
+# --- Heartbeat ---
+# Vital-signs feel: very dim red baseline at the strip's center, pulsed with
+# a "lub-dub" envelope at 60 BPM. Width pulses (Gaussian sigma widens) — the
+# CENTER pixel stays at the same dim red the whole time, side pixels brighten
+# as each bump expands outward, then collapse back. After a comet ends, the
+# engine starts the heartbeat with a 2-second linear fade-in so the strip
+# doesn't snap to full brightness.
+HEARTBEAT_COLOR = np.array((50, 0, 0), dtype=np.float32)   # very dim red
+HEARTBEAT_BPM = 60.0
+HEARTBEAT_CYCLE = 60.0 / HEARTBEAT_BPM                     # = 1.0s per beat
+HEARTBEAT_FADE_IN = 2.0                                    # seconds to ramp from 0 to full
+
+# Two Gaussian bumps per cycle (positions and shapes are normalized 0..1 of the cycle).
+# Lub (S1): bigger, longer; the dominant "first heart sound."
+# Dub (S2): smaller, shorter; the trailing follow-up. Then a long diastolic pause.
+_LUB_CENTER, _LUB_SIGMA, _LUB_AMP = 0.10, 0.040, 1.0
+_DUB_CENTER, _DUB_SIGMA, _DUB_AMP = 0.30, 0.035, 0.7
+
+HEARTBEAT_REST_SIGMA = 1.0   # spatial sigma when no bump is firing (narrow dim glow at center)
+HEARTBEAT_PEAK_SIGMA = 5.0   # spatial sigma at peak of a bump (wider expansion)
 
 # These are rebuilt by configure(); leave the default-N_PIXELS values here so
 # import-time code (tests, smoke checks) keeps working without configure().
@@ -32,35 +50,45 @@ HEARTBEAT_CENTER = N_PIXELS // 2
 _POSITIONS = np.arange(N_PIXELS, dtype=np.float32)
 
 
-def _make_heartbeat_profile(n, center, width):
-    pos = np.arange(n, dtype=np.float32) - center
-    half = width / 2.0
-    return np.where(
-        np.abs(pos) <= half,
-        0.5 * (1.0 + np.cos(np.pi * pos / half)),
-        0.0,
-    ).astype(np.float32)
-
-
-_HEARTBEAT_PROFILE = _make_heartbeat_profile(N_PIXELS, HEARTBEAT_CENTER, HEARTBEAT_WIDTH)
-
-
 def configure(n_pixels):
     """Rebuild module state for a strip of n_pixels LEDs. Call ONCE at startup
     after loading config and before spawning any animations. Reassigns the
-    module globals (N_PIXELS, HEARTBEAT_CENTER, _POSITIONS, _HEARTBEAT_PROFILE)
-    — Comet.render and render_heartbeat resolve these via the module namespace
-    at call time, so they pick up the new values."""
-    global N_PIXELS, HEARTBEAT_CENTER, _POSITIONS, _HEARTBEAT_PROFILE
+    module globals (N_PIXELS, HEARTBEAT_CENTER, _POSITIONS) — Comet.render
+    and render_heartbeat resolve these via the module namespace at call time,
+    so they pick up the new values."""
+    global N_PIXELS, HEARTBEAT_CENTER, _POSITIONS
     N_PIXELS = int(n_pixels)
     HEARTBEAT_CENTER = N_PIXELS // 2
     _POSITIONS = np.arange(N_PIXELS, dtype=np.float32)
-    _HEARTBEAT_PROFILE = _make_heartbeat_profile(N_PIXELS, HEARTBEAT_CENTER, HEARTBEAT_WIDTH)
 
 
-def render_heartbeat(fb, t):
-    breath = (math.sin(2.0 * math.pi * t / HEARTBEAT_PERIOD) + 1.0) * 0.5
-    fb += HEARTBEAT_COLOR * _HEARTBEAT_PROFILE[:, None] * breath
+def render_heartbeat(fb, t, idle_since):
+    """Render the idle heartbeat into fb. `idle_since` is the monotonic time
+    `active` became empty (engine tracks this) — used for the post-comet
+    fade-in. Returns immediately if idle_since is None (caller should never
+    invoke us when comets are active, but the guard is cheap)."""
+    if idle_since is None:
+        return
+    idle_duration = t - idle_since
+    if idle_duration <= 0.0:
+        return
+    fade = min(1.0, idle_duration / HEARTBEAT_FADE_IN)
+
+    # "Lub-dub" envelope at current time-in-cycle (0..1).
+    cycle_pos = (t / HEARTBEAT_CYCLE) % 1.0
+    lub = _LUB_AMP * math.exp(-((cycle_pos - _LUB_CENTER) / _LUB_SIGMA) ** 2)
+    dub = _DUB_AMP * math.exp(-((cycle_pos - _DUB_CENTER) / _DUB_SIGMA) ** 2)
+    pulse = min(1.0, lub + dub)
+
+    # Spatial Gaussian: sigma widens with each bump, so the visible bar
+    # expands outward. The center pixel's profile value stays 1.0 regardless
+    # of sigma — only the SIDES brighten as the pulse grows ("wider, not
+    # brighter" at the center).
+    sigma = HEARTBEAT_REST_SIGMA + (HEARTBEAT_PEAK_SIGMA - HEARTBEAT_REST_SIGMA) * pulse
+    offset = _POSITIONS - HEARTBEAT_CENTER
+    profile = np.exp(-(offset * offset) / (2.0 * sigma * sigma)).astype(np.float32)
+
+    fb += HEARTBEAT_COLOR * (profile * fade)[:, None]
 
 
 @dataclass(eq=False)

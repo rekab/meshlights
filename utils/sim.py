@@ -161,6 +161,7 @@ class Sim:
         animations.configure(self.cfg.pixels)
         self.strip, self.pixel_view = setup_strip(self.cfg.brightness, self.cfg.pixels)
         self.active = []
+        self.idle_since = None       # tracked the same way as engine.Engine
         self.lock = threading.Lock()
         self.stop = False
         self.render_thread = threading.Thread(target=self._render_loop, daemon=True)
@@ -182,8 +183,11 @@ class Sim:
                                 self.active.remove(obj)
                             except ValueError:
                                 pass
+                self.idle_since = None
             else:
-                render_heartbeat(fb, t)
+                if self.idle_since is None:
+                    self.idle_since = t
+                render_heartbeat(fb, t, self.idle_since)
             np.clip(fb, 0.0, 255.0, out=fb)
             fb_u8 = fb.astype(np.uint8)
             self.pixel_view[:, 1] = fb_u8[:, 2]
