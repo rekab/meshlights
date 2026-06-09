@@ -33,7 +33,7 @@ Commands (type at the > prompt; 'help' or '?' for this list):
   q | quit | exit
 
   Valid TYPE names: REQ, RESPONSE, TXT_MSG, ACK, ADVERT, GRP_TXT,
-                    ANON_REQ, PATH
+                    GRP_DATA, ANON_REQ, PATH
 """
 
 import random
@@ -66,7 +66,8 @@ from config import HEAD_PALETTE, PALETTE, UNKNOWN_HEAD_COLOR, WALKUP_COLOR, load
 # payload_type → human label, kept in sync with config.PALETTE for logging.
 PAYLOAD_LABELS = {
     0x00: "REQ",      0x01: "RESPONSE", 0x02: "TXT_MSG",  0x03: "ACK",
-    0x04: "ADVERT",   0x05: "GRP_TXT",  0x07: "ANON_REQ", 0x08: "PATH",
+    0x04: "ADVERT",   0x05: "GRP_TXT",  0x06: "GRP_DATA", 0x07: "ANON_REQ",
+    0x08: "PATH",
 }
 _LABEL_TO_TYPE = {v: k for k, v in PAYLOAD_LABELS.items()}
 
