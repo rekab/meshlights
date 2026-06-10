@@ -82,6 +82,38 @@ used `/boot/config.txt`), then reboot.
 SPI driver is loaded and the bus is live. No nodes = it didn't take, recheck
 `config.txt`.
 
+## Enable i2c (for the optional OLED status screen)
+
+A small SSD1306 OLED (128x64 over i2c) can be wired to the Pi to display a
+scrolling log of received packets. Wire VCC → 3.3 V (pin 1), GND → any GND,
+SDA → GPIO 2 / SDA1 (pin 3), SCL → GPIO 3 / SCL1 (pin 5).
+
+`sudo raspi-config` → **Interface Options** → **I2C** → **Enable**, then reboot.
+Non-interactive equivalent:
+
+```
+sudo raspi-config nonint do_i2c 0      # 0 means "enable"
+sudo reboot
+```
+
+Or add `dtparam=i2c_arm=on` to `/boot/firmware/config.txt` and reboot.
+
+`i2cdetect` (the bus-scan tool used for verification below) isn't installed
+by default — grab it once:
+
+```
+sudo apt install -y i2c-tools
+```
+
+**Verify it came up.** After reboot, `ls /dev/i2c-1` should show the bus
+device, and `i2cdetect -y 1` should show the OLED's address in the grid
+(usually `3c`, occasionally `3d`). If you see `3d`, pass `addr=0x3D` to
+`screen.connect()` in `screen.py`.
+
+The screen is optional — `screen.connect()` returns `None` and prints a
+warning if i2c isn't enabled or no panel responds, and the engine/sim keep
+running headless.
+
 ## Permissions
 
 Your user needs to be in the `spi` and `gpio` groups, or you run as root:

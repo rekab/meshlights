@@ -9,6 +9,8 @@ dependencies = [
     "adafruit-circuitpython-dotstar",
     "adafruit-blinka",
     "rpi-gpio",                 # blinka's GPIO backend on Raspberry Pi
+    "adafruit-circuitpython-ssd1306>=2.12.24",
+    "pillow>=12.2.0",
 ]
 
 [tool.uv]

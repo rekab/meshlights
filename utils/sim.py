@@ -28,6 +28,8 @@ Commands (type at the > prompt; 'help' or '?' for this list):
   dim [color]          spawn a dim bloom (default cyan)
   clear                kill all active animations (heartbeat resumes)
   bright X             set APA102 brightness (0..1) live
+  screen [TEXT]        write TEXT to the OLED (use "|" for line breaks),
+                       or no arg = clear
   list                 list active animations + ages
   help | ?
   q | quit | exit
@@ -82,6 +84,7 @@ def _colors_for_type(ptype):
     label = PAYLOAD_LABELS.get(ptype, f"0x{ptype:02X}")
     return tail, head, label
 from engine import setup_strip
+import screen as oled_screen
 
 
 COLOR_ALIASES = {
@@ -160,6 +163,11 @@ class Sim:
         self.cfg = load_config(config_path)
         animations.configure(self.cfg.pixels)
         self.strip, self.pixel_view = setup_strip(self.cfg.brightness, self.cfg.pixels)
+        self.screen = oled_screen.connect()
+        if self.screen is not None:
+            self.screen.show_lines(["meshlights",
+                                    f"{self.cfg.pixels} px",
+                                    "ready"])
         self.active = []
         self.heartbeat = Heartbeat()
         self.lock = threading.Lock()
@@ -223,6 +231,8 @@ class Sim:
             self.strip.show()
         except Exception:
             pass
+        if self.screen is not None:
+            self.screen.close()
 
 
 HELP = __doc__.split("Commands", 1)[1] if "Commands" in __doc__ else __doc__
@@ -322,6 +332,17 @@ def handle(sim, cmd, arg):
         b = float(arg)
         sim.set_brightness(b)
         print(f"brightness set to {b}")
+
+    elif cmd == "screen":
+        if sim.screen is None:
+            print("screen: not connected (see screen.py for wiring + i2c setup)")
+        elif not arg:
+            sim.screen.clear()
+            print("screen cleared")
+        else:
+            lines = arg.split("|")
+            sim.screen.show_lines(lines)
+            print(f"screen: {lines}")
 
     else:
         print(f"unknown command: {cmd!r}. type 'help' for the list.")
