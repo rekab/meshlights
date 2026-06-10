@@ -165,9 +165,11 @@ class Sim:
         self.strip, self.pixel_view = setup_strip(self.cfg.brightness, self.cfg.pixels)
         self.screen = oled_screen.connect()
         if self.screen is not None:
+            # Show a startup banner for 2s, then auto-dismiss to the idle
+            # attract animation built into screen.py.
             self.screen.show_lines(["meshlights",
                                     f"{self.cfg.pixels} px",
-                                    "ready"])
+                                    "ready"], hold=2.0)
         self.active = []
         self.heartbeat = Heartbeat()
         self.lock = threading.Lock()
