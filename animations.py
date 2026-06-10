@@ -31,7 +31,9 @@ DIM_BLOOM_DURATION = 1.0
 # `active` is empty. See the Heartbeat class below for the state machine.
 HEARTBEAT_COLOR = np.array((50, 0, 0), dtype=np.float32)   # very dim red
 HEARTBEAT_TRAVERSAL_TIME = 0.5     # seconds per end-to-end pass (~comet speed)
-HEARTBEAT_CYCLE = 1.0              # seconds between successive traversal STARTS
+HEARTBEAT_CYCLE = 5.0              # seconds between traversal starts; also the
+                                   # minimum delay after a comet sequence ends
+                                   # before the next traversal starts
 
 # These are rebuilt by configure(); leave the default-N_PIXELS values here so
 # import-time code (tests, smoke checks) keeps working without configure().
@@ -56,34 +58,49 @@ class Heartbeat:
     `render(fb, t, busy)` every frame. busy=True (active animations are
     rendering) suppresses NEW traversal starts; an in-flight traversal
     still completes (so the dot doesn't disappear mid-sweep when a comet
-    arrives). After all comets/sparks finish, the heartbeat resumes
-    immediately (subject to the per-cycle interval since the last start).
-    """
+    arrives). After all comets/sparks finish, the heartbeat waits
+    HEARTBEAT_CYCLE seconds (5s) from the time busy last cleared before
+    starting another traversal."""
 
     def __init__(self):
         # Monotonic time when the current traversal began. None when no
         # traversal is in flight.
         self._traversal_start = None
-        # Earliest monotonic time the next traversal may start (always
-        # `last_traversal_start + HEARTBEAT_CYCLE`).
+        # Earliest monotonic time the next traversal may start.
         self._next_allowed = 0.0
+        # Previous frame's head_pos — used to span-mark every integer pixel
+        # the head passed through this frame. Without this, the head moving
+        # ~2.3 px/frame at 60fps skips pixels in between consecutive frames.
+        self._prev_pos = None
+        # Most recent monotonic time that busy=True. Used to enforce the
+        # post-comet 5s delay (next_allowed >= last_busy + HEARTBEAT_CYCLE).
+        self._last_busy = None
 
     def render(self, fb, t, busy):
-        # Did the in-flight traversal just complete?
-        if self._traversal_start is not None:
-            if t - self._traversal_start >= HEARTBEAT_TRAVERSAL_TIME:
-                self._next_allowed = self._traversal_start + HEARTBEAT_CYCLE
-                self._traversal_start = None
+        # Track when the strip was last busy (comets/sparks rendering).
+        if busy:
+            self._last_busy = t
+
+        # If a busy period just happened (or is ongoing), defer the next
+        # traversal to last_busy + HEARTBEAT_CYCLE. Whichever is later
+        # (regular cycle interval or post-busy delay) wins.
+        if self._last_busy is not None:
+            post_busy = self._last_busy + HEARTBEAT_CYCLE
+            if post_busy > self._next_allowed:
+                self._next_allowed = post_busy
 
         # Can we start a new traversal? Needs: not currently traversing,
-        # nothing else rendering, and we're past the per-cycle interval
-        # since the last start.
+        # nothing else rendering, and we're past the gating timestamp.
         if (self._traversal_start is None
                 and not busy
                 and t >= self._next_allowed):
             self._traversal_start = t
 
-        # Render the dot if we're in flight.
+        # Render + check completion. Order matters: we have to render the
+        # frame where elapsed crosses HEARTBEAT_TRAVERSAL_TIME so the head
+        # actually reaches the last pixel (progress clamped to 1.0) — only
+        # THEN do we mark the traversal done. Reverse order would skip the
+        # final pixel because completion would reset state before render.
         if self._traversal_start is None:
             return
         n = _POSITIONS.shape[0]
@@ -95,14 +112,24 @@ class Heartbeat:
         progress = min(1.0, elapsed / HEARTBEAT_TRAVERSAL_TIME)
         head_pos = progress * (n - 1)
 
-        # Anti-aliased single pixel — keeps sub-pixel motion smooth at the
-        # ~2.3 px/frame sweep speed.
-        head_int = int(head_pos)
-        head_frac = head_pos - head_int
-        if 0 <= head_int < n:
-            fb[head_int] += HEARTBEAT_COLOR * (1.0 - head_frac)
-        if head_frac > 0.0 and 0 <= head_int + 1 < n:
-            fb[head_int + 1] += HEARTBEAT_COLOR * head_frac
+        # Span-mark every integer pixel the head crossed between the prev
+        # frame and this frame. At 2.3 px/frame, single-pixel rendering
+        # would skip every other pixel — span-marking guarantees every
+        # pixel is lit briefly as the head passes through it.
+        prev = self._prev_pos if self._prev_pos is not None else head_pos
+        lo = min(prev, head_pos)
+        hi = max(prev, head_pos)
+        p_start = max(0, int(math.floor(lo)))
+        p_end = min(n - 1, int(math.floor(hi)))
+        if p_end >= p_start:
+            fb[p_start:p_end + 1] += HEARTBEAT_COLOR
+        self._prev_pos = head_pos
+
+        # Did this frame's render carry us to the end? Mark complete.
+        if elapsed >= HEARTBEAT_TRAVERSAL_TIME:
+            self._next_allowed = self._traversal_start + HEARTBEAT_CYCLE
+            self._traversal_start = None
+            self._prev_pos = None
 
 
 @dataclass(eq=False)
