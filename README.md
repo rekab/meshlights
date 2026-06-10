@@ -177,6 +177,35 @@ python engine.py --port /dev/ttyACM0
 Add `--debug` for a one-line log per received packet (handy when validating
 the chain). `Ctrl-C` to stop — the strip blanks on the way out.
 
+### Run at boot (systemd)
+
+For an unattended install, set Meshlights up as a systemd service so it
+starts on every boot and auto-restarts on crash:
+
+```
+sudo ./install-service.sh
+sudo systemctl start meshlights
+```
+
+The install script reads your username, home directory, and the path to
+`uv` at install time — nothing is hardcoded into the repo. The generated
+unit file lives at `/etc/systemd/system/meshlights.service` (outside the
+repo) and runs the engine as your user, from this checkout, with the same
+SPI/i2c/dialout access you have interactively.
+
+To use a non-default port: `sudo PORT=/dev/ttyACM1 ./install-service.sh`.
+
+Day-to-day:
+
+```
+sudo systemctl status meshlights       # is it up?
+journalctl -u meshlights -f            # tail logs (no sudo needed)
+sudo systemctl restart meshlights      # pick up code changes after `git pull`
+sudo systemctl stop meshlights         # free the SPI bus + RAK for manual debugging
+```
+
+To uninstall: `sudo systemctl disable --now meshlights && sudo rm /etc/systemd/system/meshlights.service && sudo systemctl daemon-reload`.
+
 Other flags:
 
 - `--config <path>` — TOML config file (default `config.toml`).
