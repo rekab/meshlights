@@ -10,8 +10,8 @@ arbitrates between three modes (highest priority wins):
   log:       at least one live packet line — scrolling log dominates
   idle:      no packets; meshlights/mesh-graph attract animation runs
 
-`push_packet(label, hops, rssi, duration_s)` appends a line to the log
-("TYPE h=N -RR"). The line lives for duration_s seconds (= the strip
+`push_packet(label, hops, duration_s)` appends a line to the log
+("TYPE N hops"). The line lives for duration_s seconds (= the strip
 animation's own lifetime), then scrolls up off the top. Newest at the
 bottom; each new arrival shifts older lines up by one slot at constant
 pixel velocity.
@@ -285,11 +285,10 @@ class Screen:
 
     # ---- public API ----
 
-    def push_packet(self, label, hops, rssi, duration_s):
-        """Append a packet line. `hops` and `rssi` are formatted as
-        "TYPE h=N RR"; rssi=None renders as "--"."""
-        rssi_str = "--" if rssi is None else str(rssi)
-        text = f"{label} h={hops} {rssi_str}"
+    def push_packet(self, label, hops, duration_s):
+        """Append a packet line formatted as "TYPE N hops"."""
+        hops_str = "1 hop" if hops == 1 else f"{hops} hops"
+        text = f"{label} {hops_str}"
         with self._lock:
             born = time.monotonic()
             _, log_bot = self._log_area()

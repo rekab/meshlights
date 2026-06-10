@@ -210,11 +210,11 @@ class Sim:
         with self.lock:
             self.active.append(obj)
 
-    def log_packet(self, label, hops, rssi, duration_s):
+    def log_packet(self, label, hops, duration_s):
         """Mirror the spawn onto the OLED log (no-op when no screen)."""
         if self.screen is None:
             return
-        self.screen.push_packet(label, hops, rssi, duration_s)
+        self.screen.push_packet(label, hops, duration_s)
 
     def clear(self):
         with self.lock:
@@ -307,7 +307,7 @@ def handle(sim, cmd, arg):
         color, head_color, label = _colors_for_type(ptype)
         comet = make_comet(sim.cfg, nodes, color=color, head_color=head_color)
         sim.add(comet)
-        sim.log_packet(label, len(nodes), None, comet.total_duration())
+        sim.log_packet(label, len(nodes), comet.total_duration())
         print(f"spawned {label} comet {nodes}")
 
     elif cmd == "randcomet":
@@ -328,7 +328,7 @@ def handle(sim, cmd, arg):
         color, head_color, label = _colors_for_type(ptype)
         comet = make_comet(sim.cfg, nodes, color=color, head_color=head_color)
         sim.add(comet)
-        sim.log_packet(label, len(nodes), None, comet.total_duration())
+        sim.log_packet(label, len(nodes), comet.total_duration())
         print(f"spawned random {label} comet {nodes}")
 
     elif cmd == "walkup":
@@ -336,14 +336,14 @@ def handle(sim, cmd, arg):
         sim.add(wu)
         # Walkup branch is triggered by hop-0 ADVERTs above the RSSI
         # threshold — represent honestly as such on the OLED log.
-        sim.log_packet("ADVERT", 0, None, wu.total_duration())
+        sim.log_packet("ADVERT", 0, wu.total_duration())
         print("spawned walkup")
 
     elif cmd == "dim":
         color = parse_color(arg) if arg else COLOR_ALIASES["cyan"]
         bloom = make_dim_bloom(sim.cfg, color)
         sim.add(bloom)
-        sim.log_packet("DIM", 0, None, bloom.total_duration())
+        sim.log_packet("DIM", 0, bloom.total_duration())
         print(f"spawned dim bloom {color}")
 
     elif cmd == "bright":

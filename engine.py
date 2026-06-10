@@ -150,7 +150,7 @@ class Engine:
         # the real RSSI — that's the wire truth.
         if self.screen is not None:
             try:
-                self.screen.push_packet(label, hops or 0, rssi,
+                self.screen.push_packet(label, hops or 0,
                                         obj.total_duration())
             except Exception as e:
                 print(f"screen push_packet error: {e}", file=sys.stderr)
