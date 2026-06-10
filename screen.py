@@ -47,7 +47,13 @@ DEFAULT_W = 128
 DEFAULT_H = 64
 DEFAULT_ADDR = 0x3C
 FRAME_RATE = 10.0
-BANNER_TEXT = "meshlights"
+BANNER_BASE_TEXT = "waiting for packets"
+N_BANNER_DOTS = 3
+BANNER_DOT_SLOT_W = 7         # px per dot slot in the marquee
+BANNER_PATTERN_GAP = 48       # blank px between marquee repeats
+MARQUEE_PX_PER_SEC = 30.0     # right-to-left scroll velocity
+DOT_PULSE_STEP_S = 0.35       # seconds each pulse-state holds (4 states/cycle)
+BOLD_DOT_RADIUS = 3           # half-diameter of the "big bold" pulse glyph
 BANNER_PAD = 2
 FONT_PATHS = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -250,8 +256,9 @@ class Screen:
         self._draw = ImageDraw.Draw(self._img)
         # Banner state (shared across all modes)
         tmp = ImageDraw.Draw(Image.new("1", (width, height)))
-        bbox = tmp.textbbox((0, 0), BANNER_TEXT, font=self.font)
+        bbox = tmp.textbbox((0, 0), BANNER_BASE_TEXT, font=self.font)
         self._banner_bbox = bbox
+        self._dot_bbox = tmp.textbbox((0, 0), ".", font=self.font)
         self._banner_h = (bbox[3] - bbox[1]) + 2 * BANNER_PAD
         self._banner_at_top = random.random() < 0.5
         # Log state
@@ -277,15 +284,53 @@ class Screen:
     def _flip_banner(self):
         self._banner_at_top = random.random() < 0.5
 
-    def _draw_banner(self):
+    def _draw_banner(self, t):
+        """White bar at the chosen edge with 'waiting for packets...' marquee-
+        scrolling right-to-left. The three dots have a 4-state pulse cycle
+        (none → 1st → 2nd → 3rd → none); the active dot is drawn as a fat
+        filled circle while the rest render as the font's tiny '.' glyph."""
         y0 = 0 if self._banner_at_top else self.height - self._banner_h
         y1 = y0 + self._banner_h - 1
         self._draw.rectangle((0, y0, self.width - 1, y1), fill=255)
+
         bbox = self._banner_bbox
         tw = bbox[2] - bbox[0]
-        tx = (self.width - tw) // 2
-        ty = y0 + BANNER_PAD - bbox[1]
-        self._draw.text((tx, ty), BANNER_TEXT, font=self.font, fill=0)
+        text_y = y0 + BANNER_PAD - bbox[1]
+
+        # 4-state pulse: state 0 = no bold (rest), 1..3 = bold at d-1.
+        pulse_state = int(t / DOT_PULSE_STEP_S) % (N_BANNER_DOTS + 1)
+        bold_idx = pulse_state - 1   # -1 → none bold this frame
+
+        # Vertical anchor for the bold glyph: center on the font's natural
+        # "." position so it grows in place rather than jumping vertically.
+        d = self._dot_bbox
+        dot_center_y = text_y + (d[1] + d[3]) // 2
+
+        pattern_w = tw + N_BANNER_DOTS * BANNER_DOT_SLOT_W + BANNER_PATTERN_GAP
+        offset = (t * MARQUEE_PX_PER_SEC) % pattern_w
+
+        # Tile the pattern across the panel (typically 2 copies cover 128 px).
+        n_copies = (self.width // max(pattern_w, 1)) + 2
+        for i in range(n_copies):
+            base_x = -offset + i * pattern_w
+            if base_x > self.width:
+                break
+            if base_x + pattern_w < 0:
+                continue
+            self._draw.text((int(base_x), int(text_y)),
+                            BANNER_BASE_TEXT, font=self.font, fill=0)
+            for di in range(N_BANNER_DOTS):
+                slot_x = base_x + tw + di * BANNER_DOT_SLOT_W
+                cx = int(slot_x + BANNER_DOT_SLOT_W / 2)
+                if di == bold_idx:
+                    self._draw.ellipse(
+                        (cx - BOLD_DOT_RADIUS, dot_center_y - BOLD_DOT_RADIUS,
+                         cx + BOLD_DOT_RADIUS, dot_center_y + BOLD_DOT_RADIUS),
+                        fill=0,
+                    )
+                else:
+                    self._draw.text((int(slot_x), int(text_y)), ".",
+                                    font=self.font, fill=0)
 
     # ---- public API ----
 
@@ -362,7 +407,7 @@ class Screen:
                         self._idle.render(self._draw, t)
                         # Banner only during idle — log gets the full panel,
                         # override owns its layout.
-                        self._draw_banner()
+                        self._draw_banner(t)
                 self.oled.image(self._img)
                 self.oled.show()
             except Exception as e:
