@@ -11,14 +11,17 @@ arbitrates between three modes (highest priority wins):
   idle:      no packets; meshlights/mesh-graph attract animation runs
 
 `push_packet(label, hops, duration_s)` appends a line to the log
-("TYPE N hops"). The line lives for duration_s seconds (= the strip
-animation's own lifetime), then scrolls up off the top. Newest at the
-bottom; each new arrival shifts older lines up by one slot at constant
-pixel velocity.
+("TYPE N hops"). Lines obey simple 1D physics: each falls from above
+the top edge under constant gravity, lands on whatever is already
+stacked below it (or the screen floor), and rests there. When the
+packet dies (`duration_s` elapsed) the line slides off the right edge
+at constant horizontal velocity; lines that were resting on top lose
+support and fall under gravity to the next floor down.
 
-The meshlights banner (white bar with black text, top or bottom) is owned
-by Screen and shared across modes. The idle loop flips its side at the
-start of each cycle; log mode keeps whatever side was last set.
+The meshlights banner (white bar with black text, top or bottom) is
+shown ONLY during the idle attract animation — it's hidden while any
+packet is on the log so the lines have the full panel height. Idle
+flips the banner side at the start of each cycle.
 
 connect() returns a Screen on success or None if the OLED can't be reached.
 Callers should treat the screen as optional so the engine/sim still runs
@@ -51,9 +54,9 @@ FONT_PATHS = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 )
 FONT_SIZE = 11
-LINE_HEIGHT = 12          # vertical step per log line (px)
-SCROLL_PX_PER_SEC = 32.0  # constant velocity — ~3.2 px/frame at 10 fps
-                          # → one LINE_HEIGHT covered in ~4 frames
+LINE_HEIGHT = 12              # vertical step per log line (px)
+GRAVITY_PX_PER_SEC2 = 280.0   # downward acceleration for falling lines
+DIE_SLIDE_PX_PER_SEC = 180.0  # horizontal velocity when a line dies + scrolls off
 
 
 def _load_font():
@@ -85,14 +88,15 @@ def connect(width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
 
 
 class _LogLine:
-    __slots__ = ("text", "born_at", "expires_at", "y", "slot", "dying")
+    __slots__ = ("text", "born_at", "expires_at", "y", "vy", "x", "dying")
 
-    def __init__(self, text, born_at, expires_at, y, slot):
+    def __init__(self, text, born_at, expires_at, y):
         self.text = text
         self.born_at = born_at
         self.expires_at = expires_at
         self.y = float(y)
-        self.slot = slot          # 0 = newest (bottom); increments as newer lines arrive
+        self.vy = 0.0
+        self.x = 0.0
         self.dying = False
 
 
@@ -286,25 +290,28 @@ class Screen:
     # ---- public API ----
 
     def push_packet(self, label, hops, duration_s):
-        """Append a packet line formatted as "TYPE N hops"."""
+        """Append a packet line formatted as "TYPE N hops". The line spawns
+        just above the top of the panel (above any in-flight new lines)
+        and falls under gravity onto the stack."""
         hops_str = "1 hop" if hops == 1 else f"{hops} hops"
         text = f"{label} {hops_str}"
         with self._lock:
             born = time.monotonic()
-            _, log_bot = self._log_area()
-            # Existing lines: bump each alive line's slot up by one. Dying
-            # lines already have a fixed off-top target — leave them be.
+            # Spawn at -LINE_HEIGHT, or above the highest in-flight line if
+            # one is still falling. Keeps rapid-fire pushes stacking cleanly
+            # instead of all spawning at the same y.
+            spawn_y = float(-LINE_HEIGHT)
             for line in self._log_lines:
-                if not line.dying:
-                    line.slot += 1
-            new_line = _LogLine(
+                if line.dying:
+                    continue
+                if line.y - LINE_HEIGHT < spawn_y:
+                    spawn_y = line.y - LINE_HEIGHT
+            self._log_lines.append(_LogLine(
                 text=text,
                 born_at=born,
                 expires_at=born + duration_s,
-                y=float(log_bot),         # spawns at the bottom edge, slides up
-                slot=0,
-            )
-            self._log_lines.append(new_line)
+                y=spawn_y,
+            ))
 
     def show_lines(self, lines, hold=None):
         """Static text overlay. `hold=N` auto-dismisses back to idle/log
@@ -353,7 +360,9 @@ class Screen:
                         if self._override is not None:
                             self._override = None
                         self._idle.render(self._draw, t)
-                    self._draw_banner()
+                        # Banner only during idle — log gets the full panel,
+                        # override owns its layout.
+                        self._draw_banner()
                 self.oled.image(self._img)
                 self.oled.show()
             except Exception as e:
@@ -367,8 +376,7 @@ class Screen:
 
     def _render_override(self, lines):
         line_h = LINE_HEIGHT
-        log_top, _ = self._log_area()
-        y = log_top
+        y = 2          # slight top padding; banner is not drawn in this mode
         for line in lines:
             if y >= self.height:
                 break
@@ -376,37 +384,59 @@ class Screen:
             y += line_h
 
     def _tick_and_render_log(self, t):
-        log_top, log_bot = self._log_area()
+        """Physics step + render. Bottom-up processing so an upper line's
+        floor calc sees the post-update y of the line directly below it,
+        which keeps stacks glued together as the lower line falls. A
+        resting line inherits its support's vy so the whole tower drops
+        in lockstep when the bottom block tumbles."""
         line_h = LINE_HEIGHT
-        step = SCROLL_PX_PER_SEC / FRAME_RATE
-        off_top = float(log_top - line_h - 1)   # one pixel past the top edge
-        keep = []
+        dt = 1.0 / FRAME_RATE
+
+        # Flag any line that just hit expires_at.
         for line in self._log_lines:
-            # Mark dead lines as dying — they get a "scroll off top" target.
             if not line.dying and t >= line.expires_at:
                 line.dying = True
-            # Compute this frame's target_y.
+
+        # Dying lines slide right at constant velocity, ignore gravity.
+        # Frozen y means they don't fall through the panel — they just exit
+        # via the right edge.
+        for line in self._log_lines:
             if line.dying:
-                target = off_top
+                line.x += DIE_SLIDE_PX_PER_SEC * dt
+
+        # Alive lines: gravity + floor collision, bottom-up so each line
+        # sees the up-to-date position of whatever's below it.
+        alive_sorted = sorted(
+            (l for l in self._log_lines if not l.dying),
+            key=lambda l: -l.y,    # bottom-most first (largest y)
+        )
+        for line in alive_sorted:
+            floor = float(self.height - line_h)
+            support = None
+            for other in self._log_lines:
+                if other is line or other.dying:
+                    continue
+                if other.y > line.y:
+                    cand = other.y - line_h
+                    if cand < floor:
+                        floor = cand
+                        support = other
+            line.vy += GRAVITY_PX_PER_SEC2 * dt
+            new_y = line.y + line.vy * dt
+            if new_y >= floor:
+                line.y = floor
+                # Inherit support's vy so stacks fall together; 0 when
+                # resting on the screen floor.
+                line.vy = support.vy if support is not None else 0.0
             else:
-                target = float(log_bot - (line.slot + 1) * line_h)
-                # Pushed off the top by newer lines? Treat as dying.
-                if target < log_top:
-                    target = off_top
-                    line.dying = True
-            # Move at constant velocity toward target.
-            diff = target - line.y
-            if diff > step:
-                line.y += step
-            elif diff < -step:
-                line.y -= step
-            else:
-                line.y = target
-            # Cull when fully above the top edge.
-            if line.y > off_top + 1:
-                keep.append(line)
-        self._log_lines = keep
+                line.y = new_y
+
+        # Cull lines that have left the panel.
+        self._log_lines = [
+            l for l in self._log_lines
+            if l.x < self.width and l.y < self.height
+        ]
 
         for line in self._log_lines:
-            self._draw.text((2, int(line.y)), line.text,
+            self._draw.text((int(line.x), int(line.y)), line.text,
                             font=self.font, fill=255)
