@@ -24,25 +24,13 @@ WALKUP_BLOOM_DURATION = 1.5
 DIM_BLOOM_DURATION = 1.0
 
 # --- Heartbeat ---
-# Vital-signs feel: very dim red baseline at the strip's center, pulsed with
-# a "lub-dub" envelope at 60 BPM. Width pulses (Gaussian sigma widens) — the
-# CENTER pixel stays at the same dim red the whole time, side pixels brighten
-# as each bump expands outward, then collapse back. After a comet ends, the
-# engine starts the heartbeat with a 2-second linear fade-in so the strip
-# doesn't snap to full brightness.
+# A single dim-red dot continuously ping-pongs end-to-end at roughly comet
+# speed (one direction per HEARTBEAT_TRAVERSAL_TIME seconds, then bounces).
+# Always rendered first into the framebuffer; active animations composite
+# on top via additive blending, so during a comet you see the comet, and
+# between comets the dot's still tracking back and forth.
 HEARTBEAT_COLOR = np.array((50, 0, 0), dtype=np.float32)   # very dim red
-HEARTBEAT_BPM = 60.0
-HEARTBEAT_CYCLE = 60.0 / HEARTBEAT_BPM                     # = 1.0s per beat
-HEARTBEAT_FADE_IN = 2.0                                    # seconds to ramp from 0 to full
-
-# Two Gaussian bumps per cycle (positions and shapes are normalized 0..1 of the cycle).
-# Lub (S1): bigger, longer; the dominant "first heart sound."
-# Dub (S2): smaller, shorter; the trailing follow-up. Then a long diastolic pause.
-_LUB_CENTER, _LUB_SIGMA, _LUB_AMP = 0.10, 0.040, 1.0
-_DUB_CENTER, _DUB_SIGMA, _DUB_AMP = 0.30, 0.035, 0.7
-
-HEARTBEAT_REST_SIGMA = 1.0   # spatial sigma when no bump is firing (narrow dim glow at center)
-HEARTBEAT_PEAK_SIGMA = 5.0   # spatial sigma at peak of a bump (wider expansion)
+HEARTBEAT_TRAVERSAL_TIME = 0.5     # seconds for one end-to-end pass (~comet speed)
 
 # These are rebuilt by configure(); leave the default-N_PIXELS values here so
 # import-time code (tests, smoke checks) keeps working without configure().
@@ -62,33 +50,28 @@ def configure(n_pixels):
     _POSITIONS = np.arange(N_PIXELS, dtype=np.float32)
 
 
-def render_heartbeat(fb, t, idle_since):
-    """Render the idle heartbeat into fb. `idle_since` is the monotonic time
-    `active` became empty (engine tracks this) — used for the post-comet
-    fade-in. Returns immediately if idle_since is None (caller should never
-    invoke us when comets are active, but the guard is cheap)."""
-    if idle_since is None:
+def render_heartbeat(fb, t):
+    """Render the heartbeat dot into fb. Single dim-red pixel that bounces
+    between pixel 0 and the last pixel, taking HEARTBEAT_TRAVERSAL_TIME
+    seconds in each direction. Runs continuously — caller composites
+    everything else on top."""
+    n = _POSITIONS.shape[0]
+    if n < 2:
         return
-    idle_duration = t - idle_since
-    if idle_duration <= 0.0:
-        return
-    fade = min(1.0, idle_duration / HEARTBEAT_FADE_IN)
+    span = float(n - 1)
+    # Total distance the dot has traveled since t=0, in pixel units.
+    total_dist = t * (span / HEARTBEAT_TRAVERSAL_TIME)
+    # Triangle wave on [0, 2*span] for ping-pong motion.
+    pos_in_cycle = total_dist % (2.0 * span)
+    head_pos = pos_in_cycle if pos_in_cycle <= span else (2.0 * span - pos_in_cycle)
 
-    # "Lub-dub" envelope at current time-in-cycle (0..1).
-    cycle_pos = (t / HEARTBEAT_CYCLE) % 1.0
-    lub = _LUB_AMP * math.exp(-((cycle_pos - _LUB_CENTER) / _LUB_SIGMA) ** 2)
-    dub = _DUB_AMP * math.exp(-((cycle_pos - _DUB_CENTER) / _DUB_SIGMA) ** 2)
-    pulse = min(1.0, lub + dub)
-
-    # Spatial Gaussian: sigma widens with each bump, so the visible bar
-    # expands outward. The center pixel's profile value stays 1.0 regardless
-    # of sigma — only the SIDES brighten as the pulse grows ("wider, not
-    # brighter" at the center).
-    sigma = HEARTBEAT_REST_SIGMA + (HEARTBEAT_PEAK_SIGMA - HEARTBEAT_REST_SIGMA) * pulse
-    offset = _POSITIONS - HEARTBEAT_CENTER
-    profile = np.exp(-(offset * offset) / (2.0 * sigma * sigma)).astype(np.float32)
-
-    fb += HEARTBEAT_COLOR * (profile * fade)[:, None]
+    # Anti-aliased single pixel — sub-pixel motion stays smooth.
+    head_int = int(head_pos)
+    head_frac = head_pos - head_int
+    if 0 <= head_int < n:
+        fb[head_int] += HEARTBEAT_COLOR * (1.0 - head_frac)
+    if head_frac > 0.0 and 0 <= head_int + 1 < n:
+        fb[head_int + 1] += HEARTBEAT_COLOR * head_frac
 
 
 @dataclass(eq=False)

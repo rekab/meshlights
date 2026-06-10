@@ -59,11 +59,6 @@ class Engine:
         # detect a frozen render loop (previously these silently died on an
         # animation exception, leaving the strip stuck on its last frame).
         self.render_count = 0
-        # Monotonic time when the active list became empty. Reset to None
-        # when comets are running. render_heartbeat() uses the elapsed idle
-        # time to fade itself in over HEARTBEAT_FADE_IN seconds so the strip
-        # doesn't snap to full brightness when a comet finishes.
-        self.idle_since = None
 
     def on_rx(self, ev):
         p = ev.payload or {}
@@ -151,30 +146,29 @@ class Engine:
             try:
                 t = time.monotonic()
                 fb.fill(0.0)
-                if self.active:
-                    for obj in list(self.active):
-                        # Per-animation try/except: a broken Comet/Bloom/Walkup
-                        # can't take down the loop. Log the traceback, drop the
-                        # bad object from active so we don't keep crashing on it.
+                # Heartbeat is always rendered FIRST, underneath everything
+                # else. Active animations composite on top via additive blending.
+                render_heartbeat(fb, t)
+                for obj in list(self.active):
+                    # Per-animation try/except: a broken Comet/Bloom/Walkup
+                    # can't take down the loop. Log the traceback, drop the
+                    # bad object from active so we don't keep crashing on it.
+                    try:
+                        obj.render(fb, t)
+                        if obj.is_done(t):
+                            self.active.remove(obj)
+                    except Exception as e:
+                        print(f"render error on {type(obj).__name__}: {e}",
+                              file=sys.stderr)
+                        traceback.print_exc()
                         try:
-                            obj.render(fb, t)
-                            if obj.is_done(t):
-                                self.active.remove(obj)
-                        except Exception as e:
-                            print(f"render error on {type(obj).__name__}: {e}",
-                                  file=sys.stderr)
-                            traceback.print_exc()
-                            try:
-                                self.active.remove(obj)
-                            except ValueError:
-                                pass
-                    self.idle_since = None
-                    target_dt = 1.0 / 60.0
-                else:
-                    if self.idle_since is None:
-                        self.idle_since = t
-                    render_heartbeat(fb, t, self.idle_since)
-                    target_dt = 1.0 / 10.0
+                            self.active.remove(obj)
+                        except ValueError:
+                            pass
+                # Heartbeat moves continuously, so we always render at 60fps.
+                # (Previously dropped to 10fps idle for battery, but a 2px/frame
+                # moving dot at 10fps would strobe; 60fps keeps it smooth.)
+                target_dt = 1.0 / 60.0
 
                 np.clip(fb, 0.0, 255.0, out=fb)
                 fb_u8 = fb.astype(np.uint8)
