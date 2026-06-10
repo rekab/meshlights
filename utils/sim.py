@@ -210,6 +210,12 @@ class Sim:
         with self.lock:
             self.active.append(obj)
 
+    def log_packet(self, label, hops, rssi, duration_s):
+        """Mirror the spawn onto the OLED log (no-op when no screen)."""
+        if self.screen is None:
+            return
+        self.screen.push_packet(label, hops, rssi, duration_s)
+
     def clear(self):
         with self.lock:
             self.active.clear()
@@ -299,7 +305,9 @@ def handle(sim, cmd, arg):
             if not (0 <= n < sim.cfg.pixels):
                 raise ValueError(f"node {n} out of range 0..{sim.cfg.pixels-1}")
         color, head_color, label = _colors_for_type(ptype)
-        sim.add(make_comet(sim.cfg, nodes, color=color, head_color=head_color))
+        comet = make_comet(sim.cfg, nodes, color=color, head_color=head_color)
+        sim.add(comet)
+        sim.log_packet(label, len(nodes), None, comet.total_duration())
         print(f"spawned {label} comet {nodes}")
 
     elif cmd == "randcomet":
@@ -318,16 +326,24 @@ def handle(sim, cmd, arg):
             ptype = random.choice(list(PALETTE.keys()))
         nodes = [random.randint(0, sim.cfg.pixels - 1) for _ in range(k)]
         color, head_color, label = _colors_for_type(ptype)
-        sim.add(make_comet(sim.cfg, nodes, color=color, head_color=head_color))
+        comet = make_comet(sim.cfg, nodes, color=color, head_color=head_color)
+        sim.add(comet)
+        sim.log_packet(label, len(nodes), None, comet.total_duration())
         print(f"spawned random {label} comet {nodes}")
 
     elif cmd == "walkup":
-        sim.add(make_walkup(sim.cfg))
+        wu = make_walkup(sim.cfg)
+        sim.add(wu)
+        # Walkup branch is triggered by hop-0 ADVERTs above the RSSI
+        # threshold — represent honestly as such on the OLED log.
+        sim.log_packet("ADVERT", 0, None, wu.total_duration())
         print("spawned walkup")
 
     elif cmd == "dim":
         color = parse_color(arg) if arg else COLOR_ALIASES["cyan"]
-        sim.add(make_dim_bloom(sim.cfg, color))
+        bloom = make_dim_bloom(sim.cfg, color)
+        sim.add(bloom)
+        sim.log_packet("DIM", 0, None, bloom.total_duration())
         print(f"spawned dim bloom {color}")
 
     elif cmd == "bright":

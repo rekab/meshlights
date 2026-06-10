@@ -154,6 +154,9 @@ class Bloom:
     def is_done(self, t):
         return (t - self.start_time) >= self.duration
 
+    def total_duration(self):
+        return self.duration
+
 
 @dataclass(eq=False)
 class Walkup:
@@ -197,6 +200,9 @@ class Walkup:
 
     def is_done(self, t):
         return (t - self.start_time) >= self.duration
+
+    def total_duration(self):
+        return self.duration
 
 
 @dataclass(eq=False)
@@ -393,3 +399,15 @@ class Comet:
         if not self.sparks:
             return True
         return all((t - ts) >= SPARK_DURATION for _, ts in self.sparks)
+
+    def total_duration(self):
+        # Strip animation lifetime from start_time. The head finishes at
+        # final_dwell_end, then the trail fades over tail_duration; sparks
+        # dominate when SPARK_DURATION > dwell + tail_duration (which is
+        # ~always at default timings).
+        n = len(self.nodes)
+        if n == 0:
+            return 0.0
+        cycle = self.dwell + self.transit
+        return (n - 1) * cycle + max(self.dwell + self.tail_duration,
+                                      SPARK_DURATION)

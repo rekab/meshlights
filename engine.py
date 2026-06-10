@@ -31,6 +31,7 @@ except ImportError as e:
     sys.exit(1)
 
 import animations
+import screen as oled_screen
 from config import (
     HEAD_PALETTE, PALETTE, PAYLOAD_LABELS, UNKNOWN_COLOR, UNKNOWN_HEAD_COLOR,
     WALKUP_COLOR, byte_to_pixel, load_config, rssi_to_intensity,
@@ -46,9 +47,10 @@ PAYLOAD_ADVERT = 0x04
 
 
 class Engine:
-    def __init__(self, cfg, debug=False):
+    def __init__(self, cfg, debug=False, screen=None):
         self.cfg = cfg
         self.debug = debug
+        self.screen = screen
         self.active = []
         self.new_packet = asyncio.Event()
         self.shutdown = asyncio.Event()
@@ -89,20 +91,22 @@ class Engine:
         if not hops:
             # Hop-0: no path to trace.
             if rssi is not None and rssi > self.cfg.walkup_rssi_threshold:
-                self.active.append(Walkup(
+                obj = Walkup(
                     color=np.array(WALKUP_COLOR, dtype=np.float32),
                     peak=self.cfg.walkup_peak,
                     duration=WALKUP_BLOOM_DURATION,
                     start_time=now,
-                ))
+                )
+                self.active.append(obj)
                 kind = "WALKUP"
             else:
-                self.active.append(Bloom(
+                obj = Bloom(
                     color=color_arr,
                     peak=self.cfg.dim_bloom_peak,
                     duration=DIM_BLOOM_DURATION,
                     start_time=now,
-                ))
+                )
+                self.active.append(obj)
                 kind = "DIM_BLOOM"
         else:
             # Hop-N: trace the path. Take the first `hops` single bytes of
@@ -123,7 +127,7 @@ class Engine:
                  for i in range(hops)],
                 dtype=np.int64,
             )
-            self.active.append(Comet(
+            obj = Comet(
                 nodes=nodes,
                 color=color_arr,
                 head_color=head_color_arr,
@@ -133,13 +137,24 @@ class Engine:
                 transit=BASE_TRANSIT / self.cfg.speed,
                 head_brightness=self.cfg.head_brightness,
                 start_time=now,
-            ))
+            )
+            self.active.append(obj)
             kind = f"COMET[{hops}]"
 
         self.rx_count += 1
         self.new_packet.set()
+        label = PAYLOAD_LABELS.get(payload_type, f"0x{payload_type:02X}"
+                                   if payload_type is not None else "?")
+        # Mirror the spawn onto the OLED log. Use real hops (0 for both
+        # walkup and dim-bloom; the strong RSSI alone signals walkup) and
+        # the real RSSI — that's the wire truth.
+        if self.screen is not None:
+            try:
+                self.screen.push_packet(label, hops or 0, rssi,
+                                        obj.total_duration())
+            except Exception as e:
+                print(f"screen push_packet error: {e}", file=sys.stderr)
         if self.debug:
-            label = PAYLOAD_LABELS.get(payload_type, "?")
             rssi_str = f"{rssi}" if rssi is not None else "?"
             print(f"RX  {label:8s} hops={hops if hops is not None else '?':<2} "
                   f"rssi={rssi_str:<5} → {kind} [#{self.rx_count}]")
@@ -300,6 +315,14 @@ async def main():
     strip, pixel_view = setup_strip(cfg.brightness, cfg.pixels)
     print(f"strip up ({cfg.pixels} px, hardware SPI0, brightness={cfg.brightness:.2f})")
 
+    # Optional OLED status screen (best-effort — None if i2c/panel missing).
+    screen = oled_screen.connect()
+    if screen is not None:
+        print("OLED up (idle attract + packet log)")
+        screen.show_lines(["meshlights",
+                           f"{cfg.pixels} px",
+                           "connecting…"], hold=2.0)
+
     print(f"connecting to {args.port} @ {args.baud} ...")
     try:
         mc = await MeshCore.create_serial(args.port, args.baud, debug=args.debug)
@@ -310,7 +333,7 @@ async def main():
         sys.exit(1)
     print("connected.")
 
-    engine = Engine(cfg, debug=args.debug)
+    engine = Engine(cfg, debug=args.debug, screen=screen)
     mc.subscribe(EventType.RX_LOG_DATA, engine.on_rx)
     print("subscribed to RX_LOG_DATA. Ctrl-C to stop.\n")
 
@@ -369,6 +392,12 @@ async def main():
         strip.show()
     except Exception:
         pass
+
+    if screen is not None:
+        try:
+            screen.close()
+        except Exception:
+            pass
 
     try:
         await mc.disconnect()
