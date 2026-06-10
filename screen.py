@@ -4,20 +4,25 @@ Wiring: VCC, GND, SCL1 (GPIO 3, pin 5), SDA1 (GPIO 2, pin 3). Pi i2c-1
 must be enabled (see README "Enable i2c").
 
 The Screen object owns a background thread that redraws at ~10 fps. By
-default it renders an "attract" loop: a constellation of dim nodes with a
-packet that walks 1-3 hops between random pairs, revealing the meshlights
-title centered on the panel when the packet arrives at its destination.
+default it renders an idle attract loop:
 
-`show_lines(lines)` swaps to a static text overlay (used for the startup
-banner and the `screen` REPL command). `clear()` returns to the idle
-animation. `close()` blanks the panel and stops the thread.
+  * A "meshlights" banner pinned to the top OR bottom of the panel
+    (chosen per cycle).
+  * A constellation of nodes connected to their k nearest neighbours.
+  * Each cycle, a random source either ROUTES a single packet through
+    a non-revisiting random walk to a dead end, or FLOODS in BFS style
+    where every node re-emits to its neighbours the FIRST time it sees
+    the packet (matches MeshCore repeater semantics: subsequent dupes
+    arrive but aren't re-broadcast).
+
+`show_lines(lines)` swaps to a static text overlay. `clear()` returns to
+the idle animation. `close()` blanks the panel and stops the thread.
 
 connect() returns a Screen on success or None if the OLED can't be reached.
 Callers should treat the screen as optional so the engine/sim still runs
 headless when nothing is plugged in.
 """
 
-import math
 import random
 import sys
 import threading
@@ -35,9 +40,23 @@ except ImportError as e:
 
 DEFAULT_W = 128
 DEFAULT_H = 64
-DEFAULT_ADDR = 0x3C   # 0x3D is the other common option
-FRAME_RATE = 10.0     # OLED reads smoothly here; ~80 ms i2c TX/frame is fine
-IDLE_TEXT = ["meshlights", "listening..."]
+DEFAULT_ADDR = 0x3C      # 0x3D is the other common option
+FRAME_RATE = 10.0        # OLED reads smoothly here; ~80 ms i2c TX/frame is fine
+BANNER_TEXT = "meshlights"
+FONT_PATHS = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
+FONT_SIZE = 11
+
+
+def _load_font():
+    for path in FONT_PATHS:
+        try:
+            return ImageFont.truetype(path, FONT_SIZE)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default()
 
 
 def connect(width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
@@ -60,96 +79,179 @@ def connect(width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
 
 
 class _IdleAnim:
-    """Constellation of nodes; a packet walks 1-3 random hops; on arrival
-    the title text appears centered with a black halo to stay readable
-    over the constellation, then fades back to bare nodes.
+    """Cycle structure (per animation):
 
-    State machine:
-      rest      → wait REST seconds, then start a new packet
-      traveling → animate packet between current and next path node
-      arrived   → hold title text for TEXT_HOLD seconds, then rest
+        1. Pick banner side (top/bottom), regen node layout + adjacency.
+        2. Pick mode (routed | bfs), pick random source node.
+        3. ROUTED: precompute a random walk from source that never revisits
+           a node; animate one packet hop-by-hop along it. Ends when path
+           is exhausted (dead end or max length).
+        4. BFS: emit packets from source to all its neighbours. Each
+           arrival: if destination is unseen, mark seen + emit to its
+           neighbours; if already seen, packet dies on arrival (mirrors
+           MeshCore repeaters' "broadcast once on first sight" rule).
+           Ends when no packets remain in flight.
+        5. Rest for REST seconds (constellation only, banner stays), then
+           start the next cycle.
     """
 
     N_COLS = 4
     N_ROWS = 2
-    HOP_DURATION = 0.7    # seconds per hop; ~10 px/s wander rate
-    TEXT_HOLD = 2.2       # title visible after arrival
-    REST = 0.5            # gap between packets (constellation only)
-    MARGIN = 8
+    K_NEIGHBORS = 3
+    HOP_DURATION = 0.7
+    REST = 1.0
+    BANNER_PAD = 2
+    MAX_PACKETS = 32       # safety cap on simultaneous in-flight packets
 
-    def __init__(self, w, h):
+    def __init__(self, w, h, font):
         self.w = w
         self.h = h
-        # Grid the panel and jitter within each cell so nodes spread
-        # evenly without clustering or grid-snap artifacts.
-        cw = (w - 2 * self.MARGIN) / self.N_COLS
-        ch = (h - 2 * self.MARGIN) / self.N_ROWS
+        self.font = font
+        tmp = ImageDraw.Draw(Image.new("1", (w, h)))
+        bbox = tmp.textbbox((0, 0), BANNER_TEXT, font=font)
+        self.banner_h = (bbox[3] - bbox[1]) + 2 * self.BANNER_PAD
+        self._banner_bbox = bbox
+        self.banner_at_top = True
+        self.mode = None
         self.nodes = []
-        for r in range(self.N_ROWS):
-            for c in range(self.N_COLS):
-                cx = self.MARGIN + cw * (c + 0.5)
-                cy = self.MARGIN + ch * (r + 0.5)
-                jx = random.uniform(-cw * 0.3, cw * 0.3)
-                jy = random.uniform(-ch * 0.3, ch * 0.3)
-                self.nodes.append((int(cx + jx), int(cy + jy)))
+        self.adj = []
         self.state = "rest"
         self.state_until = 0.0
-        self.packet = None
+        self.packets = []      # list of (from_idx, to_idx, hop_start_t)
+        self.seen = set()
+        self.path = []
+        self.path_i = 0
+        self._regen_layout()
 
-    def _start_packet(self, t):
-        hops = random.randint(1, 3)
-        path = [random.randrange(len(self.nodes))]
-        while len(path) <= hops:
-            n = random.randrange(len(self.nodes))
-            if n != path[-1]:
-                path.append(n)
-        self.packet = {"path": path, "i": 0, "hop_start": t}
-        self.state = "traveling"
+    def _regen_layout(self):
+        margin_x = 8
+        margin_y = 2
+        if self.banner_at_top:
+            top = self.banner_h + margin_y
+            bot = self.h - margin_y
+        else:
+            top = margin_y
+            bot = self.h - self.banner_h - margin_y
+        cw = (self.w - 2 * margin_x) / self.N_COLS
+        ch = (bot - top) / self.N_ROWS
+        nodes = []
+        for r in range(self.N_ROWS):
+            for c in range(self.N_COLS):
+                cx = margin_x + cw * (c + 0.5)
+                cy = top + ch * (r + 0.5)
+                jx = random.uniform(-cw * 0.3, cw * 0.3)
+                jy = random.uniform(-ch * 0.3, ch * 0.3)
+                nodes.append((int(cx + jx), int(cy + jy)))
+        adj = [set() for _ in nodes]
+        for i, (x, y) in enumerate(nodes):
+            dists = sorted(
+                (((x - x2) ** 2 + (y - y2) ** 2), j)
+                for j, (x2, y2) in enumerate(nodes) if j != i
+            )
+            for _, j in dists[:self.K_NEIGHBORS]:
+                adj[i].add(j)
+                adj[j].add(i)        # symmetric — A↔B
+        self.nodes = nodes
+        self.adj = [sorted(s) for s in adj]
+
+    def _start_cycle(self, t):
+        self.banner_at_top = random.random() < 0.5
+        self._regen_layout()
+        self.mode = random.choice(("routed", "bfs"))
+        self.seen = set()
+        self.packets = []
+        src = random.randrange(len(self.nodes))
+        self.seen.add(src)
+        if self.mode == "routed":
+            self.path = self._random_walk(src)
+            if len(self.path) < 2:
+                # No usable edges from src; brief rest and try again.
+                self.state = "rest"
+                self.state_until = t + 0.3
+                return
+            self.path_i = 0
+            self.packets.append((self.path[0], self.path[1], t))
+        else:
+            for nbr in self.adj[src]:
+                self.packets.append((src, nbr, t))
+        self.state = "animating"
+
+    def _random_walk(self, src, max_len=6):
+        path = [src]
+        while len(path) < max_len:
+            unvisited = [n for n in self.adj[path[-1]] if n not in path]
+            if not unvisited:
+                break
+            path.append(random.choice(unvisited))
+        return path
 
     def render(self, draw, font, t):
-        # Constellation: every node as a single dim pixel.
-        for (x, y) in self.nodes:
-            draw.point((x, y), fill=255)
+        # Constellation: dim dot for unseen, 3x3 block for seen.
+        for i, (x, y) in enumerate(self.nodes):
+            if i in self.seen:
+                draw.rectangle((x - 1, y - 1, x + 1, y + 1), fill=255)
+            else:
+                draw.point((x, y), fill=255)
 
-        if self.state == "rest" and t >= self.state_until:
-            self._start_packet(t)
+        if self.state == "rest":
+            self._draw_banner(draw)
+            if t >= self.state_until:
+                self._start_cycle(t)
+            return
 
-        if self.state == "traveling":
-            p = self.packet
-            elapsed = t - p["hop_start"]
+        # state == animating
+        new_packets = []
+        arrivals = []
+        for (from_i, to_i, start_t) in self.packets:
+            elapsed = t - start_t
             progress = min(1.0, elapsed / self.HOP_DURATION)
-            n0 = self.nodes[p["path"][p["i"]]]
-            n1 = self.nodes[p["path"][p["i"] + 1]]
+            n0 = self.nodes[from_i]
+            n1 = self.nodes[to_i]
             x = int(n0[0] + (n1[0] - n0[0]) * progress)
             y = int(n0[1] + (n1[1] - n0[1]) * progress)
-            # Packet as a 2x2 block — visually distinguishes from 1px nodes.
             draw.rectangle((x, y, x + 1, y + 1), fill=255)
-            if progress >= 1.0:
-                p["i"] += 1
-                if p["i"] >= len(p["path"]) - 1:
-                    self.state = "arrived"
-                    self.state_until = t + self.TEXT_HOLD
-                else:
-                    p["hop_start"] = t
+            if progress < 1.0:
+                new_packets.append((from_i, to_i, start_t))
+            else:
+                arrivals.append((from_i, to_i))
 
-        if self.state == "arrived":
-            # Destination node lit as 3x3 to mark the arrival point.
-            dn = self.nodes[self.packet["path"][-1]]
-            draw.rectangle((dn[0] - 1, dn[1] - 1, dn[0] + 1, dn[1] + 1), fill=255)
-            text = "\n".join(IDLE_TEXT)
-            bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=2)
-            tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
-            tx = (self.w - tw) // 2
-            ty = (self.h - th) // 2
-            # Black halo so the text stays legible over any underlying nodes.
-            draw.rectangle((tx - 2, ty - 1, tx + tw + 1, ty + th + 1), fill=0)
-            draw.multiline_text((tx, ty), text, font=font, fill=255,
-                                spacing=2, align="center")
-            if t >= self.state_until:
-                self.state = "rest"
-                self.state_until = t + self.REST
-                self.packet = None
+        for (from_i, to_i) in arrivals:
+            first_time = to_i not in self.seen
+            self.seen.add(to_i)
+            if not first_time:
+                continue            # MeshCore: re-broadcast only on first sight
+            if self.mode == "routed":
+                nxt = self.path_i + 2
+                if nxt < len(self.path) and len(new_packets) < self.MAX_PACKETS:
+                    self.path_i += 1
+                    new_packets.append((to_i, self.path[nxt], t))
+            else:  # bfs
+                for nbr in self.adj[to_i]:
+                    if len(new_packets) >= self.MAX_PACKETS:
+                        break
+                    new_packets.append((to_i, nbr, t))
+
+        self.packets = new_packets
+        self._draw_banner(draw)       # always drawn last so it sits on top
+
+        if not self.packets:
+            self.state = "rest"
+            self.state_until = t + self.REST
+
+    def _draw_banner(self, draw):
+        if self.banner_at_top:
+            y0 = 0
+        else:
+            y0 = self.h - self.banner_h
+        y1 = y0 + self.banner_h - 1
+        draw.rectangle((0, y0, self.w - 1, y1), fill=255)
+        bbox = self._banner_bbox
+        tw = bbox[2] - bbox[0]
+        tx = (self.w - tw) // 2
+        # bbox[1] is the font's top-side bearing — subtract it so the text's
+        # visual top lands at y0 + BANNER_PAD.
+        ty = y0 + self.BANNER_PAD - bbox[1]
+        draw.text((tx, ty), BANNER_TEXT, font=self.font, fill=0)
 
 
 class Screen:
@@ -157,13 +259,13 @@ class Screen:
         self.oled = oled
         self.width = width
         self.height = height
-        self.font = ImageFont.load_default()
+        self.font = _load_font()
         self._img = Image.new("1", (width, height))
         self._draw = ImageDraw.Draw(self._img)
         self._lock = threading.Lock()
-        self._idle = _IdleAnim(width, height)
-        self._override = None        # list[str] or None
-        self._override_until = 0.0   # 0 = persistent; >0 = auto-clears at t
+        self._idle = _IdleAnim(width, height, self.font)
+        self._override = None
+        self._override_until = 0.0
         self._stop = False
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -198,7 +300,7 @@ class Screen:
                 next_t = time.monotonic()
 
     def _render_text(self, lines):
-        line_h = 11
+        line_h = 12
         y = 0
         for line in lines:
             if y >= self.height:
