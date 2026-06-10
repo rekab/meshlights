@@ -64,7 +64,12 @@ class Engine:
         # Heartbeat state machine — runs continuously but pauses while
         # comets/sparks are active (any in-flight traversal completes,
         # new traversals don't start until self.active is empty again).
-        self.heartbeat = Heartbeat()
+        # on_traversal_start mirrors the sweep onto the OLED if connected.
+        self.heartbeat = Heartbeat(on_traversal_start=self._on_heartbeat_start)
+
+    def _on_heartbeat_start(self, t):
+        if self.screen is not None:
+            self.screen.notify_heartbeat()
 
     def on_rx(self, ev):
         p = ev.payload or {}

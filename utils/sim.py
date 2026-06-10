@@ -171,7 +171,8 @@ class Sim:
                                     f"{self.cfg.pixels} px",
                                     "ready"], hold=2.0)
         self.active = []
-        self.heartbeat = Heartbeat()
+        # on_traversal_start mirrors the sweep onto the OLED if connected.
+        self.heartbeat = Heartbeat(on_traversal_start=self._on_heartbeat_start)
         self.lock = threading.Lock()
         self.stop = False
         self.render_thread = threading.Thread(target=self._render_loop, daemon=True)
@@ -215,6 +216,10 @@ class Sim:
         if self.screen is None:
             return
         self.screen.push_packet(label, hops, duration_s)
+
+    def _on_heartbeat_start(self, t):
+        if self.screen is not None:
+            self.screen.notify_heartbeat()
 
     def clear(self):
         with self.lock:

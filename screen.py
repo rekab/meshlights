@@ -18,10 +18,10 @@ packet dies (`duration_s` elapsed) the line slides off the right edge
 at constant horizontal velocity; lines that were resting on top lose
 support and fall under gravity to the next floor down.
 
-The meshlights banner (white bar with black text, top or bottom) is
-shown ONLY during the idle attract animation — it's hidden while any
-packet is on the log so the lines have the full panel height. Idle
-flips the banner side at the start of each cycle.
+The "waiting for mesh packets" marquee banner is pinned to the bottom
+of the panel and shown ONLY during the idle attract animation — it's
+hidden while any packet is on the log so the lines have the full panel
+height.
 
 connect() returns a Screen on success or None if the OLED can't be reached.
 Callers should treat the screen as optional so the engine/sim still runs
@@ -32,6 +32,8 @@ import random
 import sys
 import threading
 import time
+
+from animations import HEARTBEAT_TRAVERSAL_TIME
 
 try:
     import board
@@ -56,6 +58,9 @@ NONBOLD_DOT_RADIUS = 1        # 3 px diameter — bigger than font's '.'
 BOLD_DOT_RADIUS = 2           # 5 px diameter — smaller than the old 7
 BANNER_BLANK_SECONDS = 1.0    # solid blank gap between marquee repeats
 BANNER_PAD = 2
+HEARTBEAT_TRAIL_PX = 28       # length of the comet trail behind the head pixel
+                              # (≥ 1 frame of motion = ~26 px so no gaps frame-
+                              # to-frame at 10 fps × ~256 px/s sweep)
 FONT_PATHS = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -169,7 +174,6 @@ class _IdleAnim:
         self.adj = [sorted(s) for s in adj]
 
     def _start_cycle(self, t):
-        self.screen._flip_banner()
         self._regen_layout()
         self.mode = random.choice(("routed", "bfs"))
         self.seen = set()
@@ -261,9 +265,12 @@ class Screen:
         self._banner_bbox = bbox
         self._dot_bbox = tmp.textbbox((0, 0), ".", font=self.font)
         self._banner_h = (bbox[3] - bbox[1]) + 2 * BANNER_PAD
-        self._banner_at_top = random.random() < 0.5
+        self._banner_at_top = False    # banner is pinned to the bottom
         # Log state
         self._log_lines = []
+        # Heartbeat-sweep state — monotonic time the sweep started, or None.
+        # Engine/Sim call notify_heartbeat() to trigger this.
+        self._heartbeat_start = None
         # Override (REPL / startup banner)
         self._override = None
         self._override_until = 0.0
@@ -282,13 +289,31 @@ class Screen:
             return (self._banner_h, self.height)
         return (0, self.height - self._banner_h)
 
-    def _flip_banner(self):
-        self._banner_at_top = random.random() < 0.5
+    def _draw_heartbeat_sweep(self, t):
+        """Single-pixel sweep with a short comet trail, synced to the strip
+        heartbeat. Head x maps linearly to the panel width; trail extends
+        HEARTBEAT_TRAIL_PX behind. Renders on the row just above the bottom
+        banner and stops rendering when the traversal duration is up."""
+        if self._heartbeat_start is None:
+            return
+        elapsed = t - self._heartbeat_start
+        if elapsed < 0.0 or elapsed >= HEARTBEAT_TRAVERSAL_TIME:
+            return
+        progress = elapsed / HEARTBEAT_TRAVERSAL_TIME
+        head_x = int(round(progress * (self.width - 1)))
+        y = self.height - self._banner_h - 2     # 2 px gap above marquee
+        trail_start = max(0, head_x - HEARTBEAT_TRAIL_PX)
+        # 1 px tall comet trail.
+        self._draw.line((trail_start, y, head_x, y), fill=255)
+        # 2×2 head block so it reads as a distinct dot at the leading edge.
+        self._draw.rectangle(
+            (max(0, head_x - 1), y - 1, head_x, y), fill=255,
+        )
 
     def _draw_banner(self, t):
-        """White-on-black marquee at the chosen edge: 'waiting for mesh
-        packets' + 3 dots, scrolling right-to-left with a 1 s solid-blank
-        pause between repeats. Dots cycle a 4-state pulse
+        """White-on-black marquee pinned to the bottom of the panel:
+        'waiting for mesh packets' + 3 dots, scrolling right-to-left with
+        a 1 s solid-blank pause between repeats. Dots cycle a 4-state pulse
         (none → 1st → 2nd → 3rd → none); non-bold dots are small filled
         circles, the bold dot is a slightly larger filled circle."""
         # No background fill — the panel default (off/black) IS the banner
@@ -359,6 +384,14 @@ class Screen:
                 y=spawn_y,
             ))
 
+    def notify_heartbeat(self):
+        """Called by Engine/Sim when the strip's red heartbeat begins a
+        traversal. The OLED renders a synced sweep dot+trail across the
+        full width over HEARTBEAT_TRAVERSAL_TIME seconds, mirroring the
+        strip in 1:1 timing."""
+        with self._lock:
+            self._heartbeat_start = time.monotonic()
+
     def show_lines(self, lines, hold=None):
         """Static text overlay. `hold=N` auto-dismisses back to idle/log
         after N seconds; `hold=None` is persistent until `clear()`."""
@@ -406,6 +439,9 @@ class Screen:
                         if self._override is not None:
                             self._override = None
                         self._idle.render(self._draw, t)
+                        # Heartbeat sweep mirrors the strip's red dot when one
+                        # is in flight — drawn between constellation and banner.
+                        self._draw_heartbeat_sweep(t)
                         # Banner only during idle — log gets the full panel,
                         # override owns its layout.
                         self._draw_banner(t)

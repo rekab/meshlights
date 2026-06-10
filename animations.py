@@ -62,7 +62,7 @@ class Heartbeat:
     HEARTBEAT_CYCLE seconds (5s) from the time busy last cleared before
     starting another traversal."""
 
-    def __init__(self):
+    def __init__(self, on_traversal_start=None):
         # Monotonic time when the current traversal began. None when no
         # traversal is in flight.
         self._traversal_start = None
@@ -75,6 +75,9 @@ class Heartbeat:
         # Most recent monotonic time that busy=True. Used to enforce the
         # post-comet 5s delay (next_allowed >= last_busy + HEARTBEAT_CYCLE).
         self._last_busy = None
+        # Optional callback invoked with (t,) the instant a new traversal
+        # begins. Used by the OLED Screen to render a synced sweep mirror.
+        self.on_traversal_start = on_traversal_start
 
     def render(self, fb, t, busy):
         # Track when the strip was last busy (comets/sparks rendering).
@@ -95,6 +98,11 @@ class Heartbeat:
                 and not busy
                 and t >= self._next_allowed):
             self._traversal_start = t
+            if self.on_traversal_start is not None:
+                try:
+                    self.on_traversal_start(t)
+                except Exception:
+                    pass    # observer errors must never disrupt the heartbeat
 
         # Render + check completion. Order matters: we have to render the
         # frame where elapsed crosses HEARTBEAT_TRAVERSAL_TIME so the head
