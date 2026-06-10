@@ -38,7 +38,7 @@ from config import (
 from animations import (
     BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
-    Bloom, Comet, Walkup, render_heartbeat,
+    Bloom, Comet, Heartbeat, Walkup,
 )
 
 
@@ -59,6 +59,10 @@ class Engine:
         # detect a frozen render loop (previously these silently died on an
         # animation exception, leaving the strip stuck on its last frame).
         self.render_count = 0
+        # Heartbeat state machine — runs continuously but pauses while
+        # comets/sparks are active (any in-flight traversal completes,
+        # new traversals don't start until self.active is empty again).
+        self.heartbeat = Heartbeat()
 
     def on_rx(self, ev):
         p = ev.payload or {}
@@ -146,9 +150,12 @@ class Engine:
             try:
                 t = time.monotonic()
                 fb.fill(0.0)
-                # Heartbeat is always rendered FIRST, underneath everything
-                # else. Active animations composite on top via additive blending.
-                render_heartbeat(fb, t)
+                # Heartbeat renders FIRST, underneath everything else.
+                # busy=bool(self.active) gates new traversal starts so the
+                # heartbeat doesn't compete with comets — any in-flight
+                # traversal still completes, but new ones wait for the
+                # active list to clear.
+                self.heartbeat.render(fb, t, busy=bool(self.active))
                 for obj in list(self.active):
                     # Per-animation try/except: a broken Comet/Bloom/Walkup
                     # can't take down the loop. Log the traceback, drop the

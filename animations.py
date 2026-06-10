@@ -24,13 +24,14 @@ WALKUP_BLOOM_DURATION = 1.5
 DIM_BLOOM_DURATION = 1.0
 
 # --- Heartbeat ---
-# A single dim-red dot continuously ping-pongs end-to-end at roughly comet
-# speed (one direction per HEARTBEAT_TRAVERSAL_TIME seconds, then bounces).
-# Always rendered first into the framebuffer; active animations composite
-# on top via additive blending, so during a comet you see the comet, and
-# between comets the dot's still tracking back and forth.
+# A single dim-red pixel sweeps end-to-end once per HEARTBEAT_CYCLE,
+# always pixel 0 → pixel n-1, then the strip rests until the next cycle.
+# Suspended entirely while comets/sparks are rendering: any in-flight
+# traversal completes its current pass, but no new traversals start until
+# `active` is empty. See the Heartbeat class below for the state machine.
 HEARTBEAT_COLOR = np.array((50, 0, 0), dtype=np.float32)   # very dim red
-HEARTBEAT_TRAVERSAL_TIME = 0.5     # seconds for one end-to-end pass (~comet speed)
+HEARTBEAT_TRAVERSAL_TIME = 0.5     # seconds per end-to-end pass (~comet speed)
+HEARTBEAT_CYCLE = 1.0              # seconds between successive traversal STARTS
 
 # These are rebuilt by configure(); leave the default-N_PIXELS values here so
 # import-time code (tests, smoke checks) keeps working without configure().
@@ -50,28 +51,58 @@ def configure(n_pixels):
     _POSITIONS = np.arange(N_PIXELS, dtype=np.float32)
 
 
-def render_heartbeat(fb, t):
-    """Render the heartbeat dot into fb. Single dim-red pixel that bounces
-    between pixel 0 and the last pixel, taking HEARTBEAT_TRAVERSAL_TIME
-    seconds in each direction. Runs continuously — caller composites
-    everything else on top."""
-    n = _POSITIONS.shape[0]
-    if n < 2:
-        return
-    span = float(n - 1)
-    # Total distance the dot has traveled since t=0, in pixel units.
-    total_dist = t * (span / HEARTBEAT_TRAVERSAL_TIME)
-    # Triangle wave on [0, 2*span] for ping-pong motion.
-    pos_in_cycle = total_dist % (2.0 * span)
-    head_pos = pos_in_cycle if pos_in_cycle <= span else (2.0 * span - pos_in_cycle)
+class Heartbeat:
+    """Stateful heartbeat sweeper. Engine and sim each own one and call
+    `render(fb, t, busy)` every frame. busy=True (active animations are
+    rendering) suppresses NEW traversal starts; an in-flight traversal
+    still completes (so the dot doesn't disappear mid-sweep when a comet
+    arrives). After all comets/sparks finish, the heartbeat resumes
+    immediately (subject to the per-cycle interval since the last start).
+    """
 
-    # Anti-aliased single pixel — sub-pixel motion stays smooth.
-    head_int = int(head_pos)
-    head_frac = head_pos - head_int
-    if 0 <= head_int < n:
-        fb[head_int] += HEARTBEAT_COLOR * (1.0 - head_frac)
-    if head_frac > 0.0 and 0 <= head_int + 1 < n:
-        fb[head_int + 1] += HEARTBEAT_COLOR * head_frac
+    def __init__(self):
+        # Monotonic time when the current traversal began. None when no
+        # traversal is in flight.
+        self._traversal_start = None
+        # Earliest monotonic time the next traversal may start (always
+        # `last_traversal_start + HEARTBEAT_CYCLE`).
+        self._next_allowed = 0.0
+
+    def render(self, fb, t, busy):
+        # Did the in-flight traversal just complete?
+        if self._traversal_start is not None:
+            if t - self._traversal_start >= HEARTBEAT_TRAVERSAL_TIME:
+                self._next_allowed = self._traversal_start + HEARTBEAT_CYCLE
+                self._traversal_start = None
+
+        # Can we start a new traversal? Needs: not currently traversing,
+        # nothing else rendering, and we're past the per-cycle interval
+        # since the last start.
+        if (self._traversal_start is None
+                and not busy
+                and t >= self._next_allowed):
+            self._traversal_start = t
+
+        # Render the dot if we're in flight.
+        if self._traversal_start is None:
+            return
+        n = _POSITIONS.shape[0]
+        if n < 2:
+            return
+        elapsed = t - self._traversal_start
+        if elapsed < 0.0:
+            return
+        progress = min(1.0, elapsed / HEARTBEAT_TRAVERSAL_TIME)
+        head_pos = progress * (n - 1)
+
+        # Anti-aliased single pixel — keeps sub-pixel motion smooth at the
+        # ~2.3 px/frame sweep speed.
+        head_int = int(head_pos)
+        head_frac = head_pos - head_int
+        if 0 <= head_int < n:
+            fb[head_int] += HEARTBEAT_COLOR * (1.0 - head_frac)
+        if head_frac > 0.0 and 0 <= head_int + 1 < n:
+            fb[head_int + 1] += HEARTBEAT_COLOR * head_frac
 
 
 @dataclass(eq=False)

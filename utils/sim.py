@@ -58,7 +58,7 @@ import animations
 from animations import (
     BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
-    Bloom, Comet, Walkup, render_heartbeat,
+    Bloom, Comet, Heartbeat, Walkup,
 )
 from config import (
     HEAD_PALETTE, PALETTE, PAYLOAD_LABELS,
@@ -161,6 +161,7 @@ class Sim:
         animations.configure(self.cfg.pixels)
         self.strip, self.pixel_view = setup_strip(self.cfg.brightness, self.cfg.pixels)
         self.active = []
+        self.heartbeat = Heartbeat()
         self.lock = threading.Lock()
         self.stop = False
         self.render_thread = threading.Thread(target=self._render_loop, daemon=True)
@@ -173,8 +174,9 @@ class Sim:
             fb.fill(0.0)
             with self.lock:
                 snapshot = list(self.active)
-            # Heartbeat always renders first; comets composite on top.
-            render_heartbeat(fb, t)
+            # Heartbeat renders first; comets composite on top. busy gate
+            # suspends new traversal starts while comets are active.
+            self.heartbeat.render(fb, t, busy=bool(snapshot))
             for obj in snapshot:
                 obj.render(fb, t)
                 if obj.is_done(t):
