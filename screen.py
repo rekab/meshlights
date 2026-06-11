@@ -366,11 +366,11 @@ class Screen:
 
     def push_packet(self, label, detail, duration_s):
         """Append a packet line formatted as "LABEL DETAIL" (e.g.
-        "TXT_MSG 60B" in waterfall mode, "TXT_MSG 3 hops" in comet mode
-        — the caller picks the trailing token since each style has its
-        own most-informative summary). The line spawns just above the
-        top of the panel (above any in-flight new lines) and falls under
-        gravity onto the stack."""
+        "TXT_MSG 60 bytes" in waterfall mode, "TXT_MSG 3 hops" in comet
+        mode — the caller picks the trailing token since each style has
+        its own most-informative summary). The line spawns just above
+        the top of the panel (above any in-flight new lines) and falls
+        under gravity onto the stack."""
         text = f"{label} {detail}"
         with self._lock:
             born = time.monotonic()

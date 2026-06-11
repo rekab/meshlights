@@ -128,7 +128,8 @@ class Engine:
                     # OLED log line lifetime is unrelated to the strip
                     # bar width — keep the line readable for ~5 s
                     # regardless of airtime.
-                    self.screen.push_packet(label, f"{n_bytes}B", 5.0)
+                    detail = "1 byte" if n_bytes == 1 else f"{n_bytes} bytes"
+                    self.screen.push_packet(label, detail, 5.0)
                 except Exception as e:
                     print(f"screen push_packet error: {e}", file=sys.stderr)
             if self.debug:
