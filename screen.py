@@ -104,7 +104,26 @@ def connect(width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
         print(f"SSD1309 init failed at 0x{addr:02X}: {e}  "
               f"(check wiring; run `i2cdetect -y 1` to scan)", file=sys.stderr)
         return None
+    _retune_ssd1309(oled)
     return Screen(oled, width, height)
+
+
+def _retune_ssd1309(oled):
+    """Override luma's SSD1306-tuned pre-charge / VCOMH / contrast values
+    to SSD1309-friendly ones. luma.oled's `class ssd1309(ssd1306): pass`
+    inherits the SSD1306 init verbatim, which leaves SETPRECHARGE=0xF1
+    (15 DCLK phase 2) and SETVCOMDETECT=0x40 — both too aggressive for
+    SSD1309 and the cause of column ghosting: a single lit pixel leaves
+    residual charge on its column driver long enough that the rows above
+    it pick up a faint glow, producing the vertical bars you see from
+    corner markers and the triangular shading above the diagonal."""
+    # SETPRECHARGE — 2 DCLK phase 1 + 2 DCLK phase 2 (was 1+15).
+    oled.command(0xD9, 0x22)
+    # SETVCOMDETECT — ~0.78 × Vcc deselect (was 0.77 × Vcc but value 0x40
+    # specifically interacts poorly with SSD1309's driver).
+    oled.command(0xDB, 0x30)
+    # Contrast back to half — less driver saturation = less bleed.
+    oled.contrast(0x7F)
 
 
 class _LogLine:
