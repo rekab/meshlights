@@ -128,7 +128,7 @@ class Engine:
                     # OLED log line lifetime is unrelated to the strip
                     # bar width — keep the line readable for ~5 s
                     # regardless of airtime.
-                    self.screen.push_packet(label, n_bytes, 5.0)
+                    self.screen.push_packet(label, f"{n_bytes}B", 5.0)
                 except Exception as e:
                     print(f"screen push_packet error: {e}", file=sys.stderr)
             if self.debug:
@@ -195,15 +195,14 @@ class Engine:
         self.new_packet.set()
         label = PAYLOAD_LABELS.get(payload_type, f"0x{payload_type:02X}"
                                    if payload_type is not None else "?")
-        # Mirror the spawn onto the OLED log. Pass the on-air byte count
-        # (MeshCore payload_length — full frame including the per-hop path
-        # bytes); that's the wire truth and matches what the waterfall
-        # encodes in bar width.
+        # Mirror the spawn onto the OLED log. Comet mode is about
+        # individual packet ROUTES, so the hop count is the most
+        # informative summary (vs. waterfall, which uses byte count).
         if self.screen is not None:
             try:
-                n_bytes = int(p.get("payload_length") or 0)
-                self.screen.push_packet(label, n_bytes,
-                                        obj.total_duration())
+                n_hops = hops or 0
+                detail = "1 hop" if n_hops == 1 else f"{n_hops} hops"
+                self.screen.push_packet(label, detail, obj.total_duration())
             except Exception as e:
                 print(f"screen push_packet error: {e}", file=sys.stderr)
         if self.debug:
