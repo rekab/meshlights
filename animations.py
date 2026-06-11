@@ -482,18 +482,35 @@ class Waterfall:
         snapshot = list(self.records)
         for t_rx, airtime, color in snapshot:
             age = t - t_rx
-            right_px = (n_px - 1) - age / sec_per_px
-            # Position uses real airtime → time axis stays linear (a bar's
-            # right edge IS where it arrived in time). Width is multiplied
-            # by `exaggeration` only, so a bar reaches further into the
-            # past visually than it actually occupied on air. This makes
-            # collisions read truthfully: two packets that arrived close
-            # enough in time to collide in real RF will visibly overlap on
-            # the strip, and the strip "fills up" at roughly the real
-            # channel's saturation point (real LoRa collapses around
-            # 20–30% airtime utilization, so exaggeration ≈ 4–5× maps
-            # "strip visually full" → "channel actually saturated").
-            width_px = (airtime / sec_per_px) * self.exaggeration
+            if age < 0.0:
+                continue
+            # Two-phase rendering:
+            #  - During age < airtime: the packet is "arriving live." Right
+            #    edge pinned to the rightmost pixel (the live edge of the
+            #    strip), left edge growing leftward at
+            #    exaggeration × scroll_rate. You literally watch the bar
+            #    scroll onto the strip over its real airtime — short packets
+            #    flash, long packets grow visibly.
+            #  - At age >= airtime: bar locks at full width and slides left
+            #    at scroll_rate. Continuous handoff: at age == airtime, the
+            #    branch flips while right_px stays at n_px - 1 and width_px
+            #    stays at full, so there's no positional jump.
+            # Overlap is INTENDED: two packets arriving close together both
+            # pin right edges to n_px - 1 simultaneously, additively summing
+            # at the live edge — that's the channel-collision visual the
+            # exaggeration factor is calibrated for (real LoRa collapses
+            # around 20–30% airtime utilization, so 4–5× exaggeration maps
+            # "strip visually saturated" → "channel actually saturated").
+            # Positions are pixel BOUNDARIES (pixel i occupies the column
+            # [i, i+1]), so the live edge — the right boundary of the
+            # rightmost pixel — is at position n_px, not n_px - 1.
+            full_width_px = (airtime / sec_per_px) * self.exaggeration
+            if age < airtime:
+                right_px = float(n_px)
+                width_px = (age / sec_per_px) * self.exaggeration
+            else:
+                right_px = n_px - (age - airtime) / sec_per_px
+                width_px = full_width_px
             left_px = right_px - width_px
 
             # Sub-pixel anti-aliased horizontal bar. Each integer pixel
