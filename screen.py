@@ -12,8 +12,8 @@ arbitrates between three modes (highest priority wins):
   log:       at least one live packet line — scrolling log dominates
   idle:      no packets; meshlights/mesh-graph attract animation runs
 
-`push_packet(label, hops, duration_s)` appends a line to the log
-("TYPE N hops"). Lines obey simple 1D physics: each falls from above
+`push_packet(label, n_bytes, duration_s)` appends a line to the log
+("TYPE NNB"). Lines obey simple 1D physics: each falls from above
 the top edge under constant gravity, lands on whatever is already
 stacked below it (or the screen floor), and rests there. When the
 packet dies (`duration_s` elapsed) the line slides off the right edge
@@ -364,12 +364,12 @@ class Screen:
 
     # ---- public API ----
 
-    def push_packet(self, label, hops, duration_s):
-        """Append a packet line formatted as "TYPE N hops". The line spawns
-        just above the top of the panel (above any in-flight new lines)
-        and falls under gravity onto the stack."""
-        hops_str = "1 hop" if hops == 1 else f"{hops} hops"
-        text = f"{label} {hops_str}"
+    def push_packet(self, label, n_bytes, duration_s):
+        """Append a packet line formatted as "TYPE NNB" (n_bytes = payload
+        size on the wire). The line spawns just above the top of the panel
+        (above any in-flight new lines) and falls under gravity onto the
+        stack."""
+        text = f"{label} {int(n_bytes)}B"
         with self._lock:
             born = time.monotonic()
             # Spawn at -LINE_HEIGHT, or above the highest in-flight line if
