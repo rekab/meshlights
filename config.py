@@ -54,6 +54,9 @@ HEAD_PALETTE = {
 UNKNOWN_HEAD_COLOR = (100, 100, 100)   # neutral gray (matches UNKNOWN_COLOR; avoid white which is reserved for walk-ups)
 
 
+STYLES = ("comet", "waterfall")
+
+
 @dataclass(frozen=True)
 class Config:
     pixels: int                  # actual LED count on the strip
@@ -65,6 +68,11 @@ class Config:
     brightness: float            # 0.0..1.0 → APA102 per-LED 5-bit brightness byte
     walkup_peak: float           # peak intensity for the white walk-up bloom
     dim_bloom_peak: float        # peak intensity for dim zero-hop blooms
+    style: str                       # "comet" (default) | "waterfall"
+    waterfall_seconds: float         # window of LoRa air shown across the strip
+    waterfall_bytes_per_sec: float   # marginal LoRa payload rate (B/s)
+    waterfall_overhead_sec: float    # fixed LoRa PHY cost per TX (s)
+    waterfall_intensity: float       # waterfall bar brightness multiplier
 
 
 def load_config(path):
@@ -72,6 +80,14 @@ def load_config(path):
         data = tomllib.load(f)
     strip = data.get("strip", {})
     bloom = data.get("bloom", {})
+    wf = data.get("waterfall", {})
+    style = str(data.get("style", "comet"))
+    if style not in STYLES:
+        raise ValueError(
+            f"config: style={style!r} not recognized — must be one of "
+            f"{STYLES}. Set top-level `style = \"comet\"` or "
+            f"`style = \"waterfall\"` in {path}."
+        )
     return Config(
         pixels=int(strip.get("pixels", 144)),
         tail_duration=float(data["comet"]["tail_duration"]),
@@ -82,6 +98,11 @@ def load_config(path):
         brightness=float(strip.get("brightness", 0.25)),
         walkup_peak=float(bloom.get("walkup_peak", 0.6)),
         dim_bloom_peak=float(bloom.get("dim_peak", 0.25)),
+        style=style,
+        waterfall_seconds=float(wf.get("window_seconds", 60.0)),
+        waterfall_bytes_per_sec=float(wf.get("bytes_per_sec", 340.0)),
+        waterfall_overhead_sec=float(wf.get("overhead_sec", 0.030)),
+        waterfall_intensity=float(wf.get("intensity", 1.0)),
     )
 
 

@@ -5,6 +5,7 @@ into an (N_PIXELS, 3) float32 framebuffer — caller clips once after compositio
 """
 
 import math
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -419,3 +420,82 @@ class Comet:
         cycle = self.dwell + self.transit
         return (n - 1) * cycle + max(self.dwell + self.tail_duration,
                                       SPARK_DURATION)
+
+
+@dataclass(eq=False)
+class Waterfall:
+    """Channel-occupancy spectrogram. The strip represents the last
+    window_seconds of LoRa air, scrolling — newest packet at the right
+    edge (pixel n-1), oldest scrolling off the left. Each record renders
+    as an additive horizontal bar whose width is the packet's airtime and
+    whose color is its payload-type hue.
+
+    Airtime model:
+        airtime_sec = overhead_sec + payload_bytes / bytes_per_sec
+
+    `payload_bytes` here is the full on-air MeshCore frame size (MeshCore
+    `payload_length`), which already includes the per-hop-growing path
+    bytes. overhead_sec captures the LoRa PHY preamble + explicit-header
+    cost that MeshCore doesn't surface.
+
+    Heartbeat is suppressed in waterfall mode — the channel state itself
+    indicates liveness. Engine drives this via `add()` on RX and
+    `render(fb, t)` once per frame; there's exactly one Waterfall per
+    Engine in waterfall mode."""
+    n_pixels: int
+    window_seconds: float
+    bytes_per_sec: float
+    overhead_sec: float
+    intensity: float = 1.0
+    # records: deque[(t_arrival: float, airtime_sec: float, color: np.ndarray)]
+    # deque (not list) so on_rx and render_loop are correct even if
+    # meshcore ever dispatches off the asyncio loop — append (tail) and
+    # popleft (head) are atomic single-bytecode ops in CPython under the
+    # GIL. Today, dispatch is awaited from the serial reader's asyncio
+    # task, so on_rx and render_loop are already serialized by
+    # cooperative scheduling — this is defensive against future changes.
+    records: deque = field(default_factory=deque)
+
+    def add(self, t, payload_bytes, color):
+        airtime = self.overhead_sec + max(payload_bytes, 0) / self.bytes_per_sec
+        self.records.append((t, airtime, color))
+
+    def render(self, fb, t):
+        n_px = self.n_pixels
+        if n_px <= 0 or self.window_seconds <= 0.0:
+            return
+        sec_per_px = self.window_seconds / n_px
+
+        # Pop expired records off the head. Records are append-only and
+        # arrival-time ordered, so a head past the cutoff means everything
+        # before it is too. The +2s slack lets bars whose right edge has
+        # scrolled past pixel 0 finish fading off cleanly instead of
+        # snapping when their left edge hits the cull threshold.
+        cutoff_age = self.window_seconds + 2.0
+        while self.records and (t - self.records[0][0]) >= cutoff_age:
+            self.records.popleft()
+
+        # Snapshot for iteration. A concurrent append (if dispatch is
+        # ever threaded) lands after the snapshot view and shows up next
+        # frame — preferable to mutating-during-iterate.
+        snapshot = list(self.records)
+        for t_rx, airtime, color in snapshot:
+            age = t - t_rx
+            right_px = (n_px - 1) - age / sec_per_px
+            width_px = airtime / sec_per_px
+            left_px = right_px - width_px
+
+            # Sub-pixel anti-aliased horizontal bar. Each integer pixel
+            # gets `color * coverage_fraction` so a 0.3-px-wide bar still
+            # lights one pixel at 30% — keeps silence vs traffic readable
+            # even when individual packets are narrower than a pixel
+            # (typical at 60s window: a 40-byte packet's ~150 ms airtime
+            # spans ~0.18 px at 71 px / 60 s).
+            i_lo = max(0, int(math.floor(left_px)))
+            i_hi = min(n_px - 1, int(math.floor(right_px)))
+            if i_hi < i_lo:
+                continue
+            for i in range(i_lo, i_hi + 1):
+                cov = min(i + 1, right_px) - max(i, left_px)
+                if cov > 0.0:
+                    fb[i] += color * (cov * self.intensity)

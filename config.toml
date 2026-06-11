@@ -1,3 +1,10 @@
+# Animation style. "comet" (default) renders each RX packet as a path-tracing
+# comet with the heartbeat sweeping in idle. "waterfall" turns the strip into
+# a scrolling channel-occupancy spectrogram — bar width = airtime, color =
+# payload type, gaps = real silence. Heartbeat is suppressed in waterfall.
+# Override at runtime with --style {comet,waterfall}.
+style = "comet"
+
 [strip]
 # Number of LEDs on the physical strip. Set this to match your hardware
 # — the original design assumed 144, but this is whatever you actually
@@ -32,3 +39,33 @@ rssi_threshold = -45       # PLACEHOLDER — calibrate against rooftop capture, 
 
 [rssi_ramp]
 gamma = 2.0                # PLACEHOLDER — calibrate against rooftop capture, NOT desk data
+
+[waterfall]
+# Bar width per packet:
+#     airtime_sec = overhead_sec + payload_length / bytes_per_sec
+#
+# payload_length (from MeshCore RX) is the FULL on-air MeshCore frame:
+# type byte, route flags, path_hash_size byte, path hashes
+# (path_hash_size × path_len bytes — grows per hop), encrypted body, MAC.
+# It does NOT include the LoRa PHY preamble + explicit-header symbols —
+# overhead_sec accounts for those.
+#
+# Defaults are tuned for the deployment preset SF7 / BW62.5 / CR4-5:
+#   - overhead_sec 0.030 ≈ 8-symbol preamble (~25 ms) + a few PHY-header
+#     symbols. SF7/BW62.5 T_sym = 2.048 ms. (Strict modelling of the
+#     8 fixed sync symbols + explicit-header cost at PL=0 pushes this to
+#     ~50 ms — the 0.030 default trades that off; calibrate empirically.)
+#   - bytes_per_sec 340 ≈ marginal payload rate at SF7/BW62.5/CR4-5.
+#     (Lower SF or larger BW: faster. SF8 BW125 ≈ 1.5 kB/s.)
+#
+# window_seconds vs visibility: at 60 s / 71 px = 0.85 s/px, a typical
+# 40-byte packet's airtime (~150 ms) is ~0.18 px — visible only as
+# fractional brightness on one pixel (sub-pixel coverage anti-aliasing
+# handles this). That IS the spectrogram view: bright = busy channel,
+# dark = quiet. Shorten to 5–15 s while calibrating bytes_per_sec /
+# overhead_sec — at 5 s / 71 px = 0.07 s/px, a 12-byte ACK reads as
+# ~0.9 px and a 60-byte TXT_MSG reads as ~3 px, both distinguishable bars.
+window_seconds = 60.0
+bytes_per_sec  = 340.0
+overhead_sec   = 0.030
+intensity      = 1.0

@@ -9,6 +9,7 @@ during dormancy (idle heartbeat only) — battery installation budget.
 
 import argparse
 import asyncio
+import dataclasses
 import signal
 import sys
 import time
@@ -39,7 +40,7 @@ from config import (
 from animations import (
     BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
-    Bloom, Comet, Heartbeat, Walkup,
+    Bloom, Comet, Heartbeat, Walkup, Waterfall,
 )
 
 
@@ -66,6 +67,19 @@ class Engine:
         # new traversals don't start until self.active is empty again).
         # on_traversal_start mirrors the sweep onto the OLED if connected.
         self.heartbeat = Heartbeat(on_traversal_start=self._on_heartbeat_start)
+        # Waterfall: scrolling channel-occupancy spectrogram. Constructed
+        # only when cfg.style == "waterfall". When set, on_rx pushes
+        # records into it instead of building per-packet animations, and
+        # render_loop renders it instead of the heartbeat+active list.
+        self.waterfall = None
+        if cfg.style == "waterfall":
+            self.waterfall = Waterfall(
+                n_pixels=cfg.pixels,
+                window_seconds=cfg.waterfall_seconds,
+                bytes_per_sec=cfg.waterfall_bytes_per_sec,
+                overhead_sec=cfg.waterfall_overhead_sec,
+                intensity=cfg.waterfall_intensity,
+            )
 
     def _on_heartbeat_start(self, t):
         if self.screen is not None:
@@ -92,6 +106,36 @@ class Engine:
         head_color_arr = np.array(head_color, dtype=np.float32)
         intensity = rssi_to_intensity(rssi, self.cfg.rssi_ramp_gamma)
         kind = "?"
+
+        if self.waterfall is not None:
+            # Waterfall mode: every packet is a bar — no hop-0/hop-N split,
+            # no RSSI-based walkup, no per-packet animation object.
+            # payload_length is the full on-air MeshCore frame (already
+            # includes the per-hop-growing path bytes), so pass it
+            # through unchanged — Waterfall.add layers the LoRa PHY
+            # overhead on top.
+            n_bytes = int(p.get("payload_length") or 0)
+            self.waterfall.add(now, n_bytes, color_arr)
+            self.rx_count += 1
+            self.new_packet.set()
+            label = PAYLOAD_LABELS.get(
+                payload_type,
+                f"0x{payload_type:02X}" if payload_type is not None else "?",
+            )
+            if self.screen is not None:
+                try:
+                    # OLED log line lifetime is unrelated to the strip
+                    # bar width — keep the line readable for ~5 s
+                    # regardless of airtime.
+                    self.screen.push_packet(label, hops or 0, 5.0)
+                except Exception as e:
+                    print(f"screen push_packet error: {e}", file=sys.stderr)
+            if self.debug:
+                rssi_str = f"{rssi}" if rssi is not None else "?"
+                print(f"RX  {label:8s} hops={hops or 0:<2} "
+                      f"rssi={rssi_str:<5} bytes={n_bytes:<4} "
+                      f"→ WATERFALL [#{self.rx_count}]")
+            return
 
         if not hops:
             # Hop-0: no path to trace.
@@ -170,28 +214,41 @@ class Engine:
             try:
                 t = time.monotonic()
                 fb.fill(0.0)
-                # Heartbeat renders FIRST, underneath everything else.
-                # busy=bool(self.active) gates new traversal starts so the
-                # heartbeat doesn't compete with comets — any in-flight
-                # traversal still completes, but new ones wait for the
-                # active list to clear.
-                self.heartbeat.render(fb, t, busy=bool(self.active))
-                for obj in list(self.active):
-                    # Per-animation try/except: a broken Comet/Bloom/Walkup
-                    # can't take down the loop. Log the traceback, drop the
-                    # bad object from active so we don't keep crashing on it.
+                if self.waterfall is not None:
+                    # Waterfall mode: single persistent renderer owns the
+                    # whole strip. Heartbeat suppressed — the channel
+                    # state itself is the liveness indicator (rolling
+                    # bars at the right edge, fade-out on the left). No
+                    # self.active iteration; on_rx routes packets into
+                    # the waterfall instead.
                     try:
-                        obj.render(fb, t)
-                        if obj.is_done(t):
-                            self.active.remove(obj)
+                        self.waterfall.render(fb, t)
                     except Exception as e:
-                        print(f"render error on {type(obj).__name__}: {e}",
-                              file=sys.stderr)
+                        print(f"waterfall render error: {e}", file=sys.stderr)
                         traceback.print_exc()
+                else:
+                    # Heartbeat renders FIRST, underneath everything else.
+                    # busy=bool(self.active) gates new traversal starts so the
+                    # heartbeat doesn't compete with comets — any in-flight
+                    # traversal still completes, but new ones wait for the
+                    # active list to clear.
+                    self.heartbeat.render(fb, t, busy=bool(self.active))
+                    for obj in list(self.active):
+                        # Per-animation try/except: a broken Comet/Bloom/Walkup
+                        # can't take down the loop. Log the traceback, drop the
+                        # bad object from active so we don't keep crashing on it.
                         try:
-                            self.active.remove(obj)
-                        except ValueError:
-                            pass
+                            obj.render(fb, t)
+                            if obj.is_done(t):
+                                self.active.remove(obj)
+                        except Exception as e:
+                            print(f"render error on {type(obj).__name__}: {e}",
+                                  file=sys.stderr)
+                            traceback.print_exc()
+                            try:
+                                self.active.remove(obj)
+                            except ValueError:
+                                pass
                 # Heartbeat moves continuously, so we always render at 60fps.
                 # (Previously dropped to 10fps idle for battery, but a 2px/frame
                 # moving dot at 10fps would strobe; 60fps keeps it smooth.)
@@ -310,9 +367,13 @@ async def main():
                     help="disable the AGC-stick keepalive advert "
                          "(RX may go dormant — see MeshCore #1209)")
     ap.add_argument("--keepalive-sec", type=int, default=300)
+    ap.add_argument("--style", choices=("comet", "waterfall"),
+                    help="override [style] from config.toml")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    if args.style is not None:
+        cfg = dataclasses.replace(cfg, style=args.style)
     if args.debug:
         print("config:", cfg)
 
