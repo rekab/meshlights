@@ -1,9 +1,9 @@
-# Animation style. "comet" (default) renders each RX packet as a path-tracing
-# comet with the heartbeat sweeping in idle. "waterfall" turns the strip into
-# a scrolling channel-occupancy spectrogram — bar width = airtime, color =
-# payload type, gaps = real silence. Heartbeat is suppressed in waterfall.
-# Override at runtime with --style {comet,waterfall}.
-style = "comet"
+# Animation style. "waterfall" (default) turns the strip into a scrolling
+# channel-occupancy spectrogram — bar width = airtime, color = payload type,
+# gaps = real silence, heartbeat suppressed. "comet" renders each RX packet
+# as a path-tracing comet with the heartbeat sweeping in idle.
+# Override at runtime with --style {waterfall,comet}.
+style = "waterfall"
 
 [strip]
 # Number of LEDs on the physical strip. Set this to match your hardware

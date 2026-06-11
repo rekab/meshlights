@@ -2,10 +2,24 @@
 
 A generative LED art installation driven by live MeshCore mesh traffic. A
 RAK4631 running MeshCore companion firmware is USB-tethered to a Raspberry Pi;
-an APA102/DotStar strip on hardware SPI0 visualizes every received packet as
-a path-trace "comet," with full-strip blooms for direct (zero-hop) arrivals
-and a soft heartbeat when the mesh is quiet. Strip length is configurable
-(see `strip.pixels` in `config.toml`).
+an APA102/DotStar strip on hardware SPI0 visualizes the RX feed in one of
+two styles:
+
+- **`waterfall` (default)** — the strip is a scrolling spectrogram of the
+  last ~15 s of LoRa air. Each packet renders as a horizontal bar whose
+  width is its airtime and whose color is its payload type; gaps are real
+  silence. Reads as channel state — a busy mesh looks dense, a quiet mesh
+  looks sparse, a long text message visibly occupies more channel than
+  an ACK. Isomorphic to channel occupancy.
+- **`comet`** — each packet spawns a path-tracing comet that traces its
+  hop-by-hop route across the strip, with full-strip blooms for direct
+  (zero-hop) arrivals and a soft heartbeat when the mesh is quiet. Reads
+  as individual packet events.
+
+Style is set in `config.toml` or overridden with `--style`; strip length
+is configurable via `strip.pixels`. Defaults assume the SF7 / BW62.5 / CR4-5
+LoRa preset — see the **Visualization styles** section below to retune if
+your mesh runs a different preset.
 
 ## Hardware
 
@@ -208,6 +222,8 @@ To uninstall: `sudo systemctl disable --now meshlights && sudo rm /etc/systemd/s
 
 Other flags:
 
+- `--style {waterfall,comet}` — override the animation style from
+  `config.toml` for one run (handy for A/B'ing during install).
 - `--config <path>` — TOML config file (default `config.toml`).
 - `--baud <n>` — serial baud (default 115200).
 - `--keepalive-sec <n>` — interval for the AGC-stick keepalive advert
@@ -220,6 +236,33 @@ Edit `config.toml` and restart the engine. Two values
 (`walkup.rssi_threshold`, `rssi_ramp.gamma`) are deliberate placeholders —
 they're meant to be calibrated against an outdoor capture at the install site,
 not against indoor / desk data.
+
+### Visualization styles
+
+Top-level `style = "waterfall"` (default) or `"comet"` in `config.toml`,
+overridable with `--style` on the CLI.
+
+**Waterfall** turns the strip into a scrolling channel-occupancy spectrogram.
+Each RX packet renders as an additive bar — right edge at the moment of
+arrival, sliding left, color = payload type, width ∝ airtime. Bars overlap
+visually exactly when the underlying transmissions overlapped on air — so
+collisions and channel saturation read truthfully. Knobs in `[waterfall]`:
+
+| Knob | Default | What it does |
+|---|---|---|
+| `window_seconds` | `15.0` | How much LoRa air the full strip represents. Shorter = individual packets read as visible bars; longer (e.g. 60 s) = pure spectrogram view where individual packets are sub-pixel and brightness encodes aggregate occupancy. |
+| `bytes_per_sec` | `340.0` | Marginal LoRa payload rate at SF7 / BW62.5 / CR4-5. Drop for slower presets (SF12/BW250 ≈ 22; SF10 ≈ 88), raise for faster ones (SF8/BW125 ≈ 1500). |
+| `overhead_sec` | `0.030` | Fixed LoRa PHY cost (preamble + explicit header) per transmission. Without this, small packets (ACKs) hit the floor and disappear. |
+| `exaggeration` | `5.0` | Visual width multiplier on real airtime. Real LoRa channels collapse around 20–30% airtime utilization, so 4–5× maps "strip visually full" → "real channel saturated" — collisions read truthfully (overlapping bars = overlapping transmissions). Set to `1.0` for strict 1:1 isomorphism. |
+| `intensity` | `1.0` | Overall bar brightness multiplier on top of `strip.brightness`. |
+
+**Comet** spawns a per-packet animation that walks the route across the
+strip: each hop is a dwell-and-transit step in the payload-type color,
+with a contrasting head accent and lingering "spark" at each visited
+pixel. Direct (zero-hop) arrivals trigger either a dim full-strip bloom
+or a brighter "walk-up" bloom above the RSSI threshold; a soft red
+heartbeat sweeps the strip when the mesh is idle. Knobs in `[comet]`,
+`[bloom]`, `[walkup]`, `[rssi_ramp]` — see the comments in `config.toml`.
 
 ### Strip length
 
@@ -238,15 +281,18 @@ energy) and **night-time art-piece viewing**, not room lighting. Three knobs:
 | Knob | Default | What it does |
 |---|---|---|
 | `strip.brightness` | `0.25` | Maps to the APA102 per-LED 5-bit brightness byte (`int(31 * b)`). This is the primary current cap — per-LED current scales linearly with it. |
-| `bloom.walkup_peak` | `0.6` | Intensity of the white walk-up bloom (the only thing that lights the entire strip at once). |
-| `bloom.dim_peak` | `0.25` | Intensity of dim zero-hop blooms. |
+| `bloom.walkup_peak` | `0.6` | Intensity of the white walk-up bloom (comet mode only). |
+| `bloom.dim_peak` | `0.25` | Intensity of dim zero-hop blooms (comet mode only). |
 
 Rough current envelope at defaults (`brightness=0.25`):
 
-- **Idle heartbeat:** ~10 mA — basically free.
-- **A comet active:** ~200–400 mA peak across the tail.
-- **Walk-up bloom (worst case):** ~1.3 A peak, ~0.85 A averaged over the
-  1.5 s sin envelope. Energy ≈ 0.4 mAh per bloom.
+- **Waterfall, quiet mesh:** near zero — gaps render as off pixels.
+- **Waterfall, busy mesh:** scales with channel occupancy; the strip
+  caps out around the same draw as a comet at the same brightness.
+- **Comet, idle heartbeat:** ~10 mA — basically free.
+- **Comet active:** ~200–400 mA peak across the tail.
+- **Walk-up bloom (comet, worst case):** ~1.3 A peak, ~0.85 A averaged
+  over the 1.5 s sin envelope. Energy ≈ 0.4 mAh per bloom.
 
 Expected runtime on a 2× 18650 bank (~3 Ah @ 5V usable): typically
 **8–12 hours** in a quiet-to-moderately-busy mesh.
@@ -260,7 +306,7 @@ current), then `strip.brightness`.
 
 - `engine.py` — entrypoint: MeshCore connect, RX subscription, keepalive
   worker, render loop, graceful shutdown.
-- `animations.py` — Comet / Bloom dataclasses + idle heartbeat (vectorized NumPy).
+- `animations.py` — Waterfall / Comet / Bloom / Walkup dataclasses + idle heartbeat (vectorized NumPy).
 - `config.py` — TOML loader, palette, repeater→pixel hash, RSSI ramp.
 - `config.toml` — tunable parameters.
 - `pyproject.toml` — uv project + dependency manifest.

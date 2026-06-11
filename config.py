@@ -68,7 +68,7 @@ class Config:
     brightness: float            # 0.0..1.0 → APA102 per-LED 5-bit brightness byte
     walkup_peak: float           # peak intensity for the white walk-up bloom
     dim_bloom_peak: float        # peak intensity for dim zero-hop blooms
-    style: str                       # "comet" (default) | "waterfall"
+    style: str                       # "waterfall" (default) | "comet"
     waterfall_seconds: float         # window of LoRa air shown across the strip
     waterfall_bytes_per_sec: float   # marginal LoRa payload rate (B/s)
     waterfall_overhead_sec: float    # fixed LoRa PHY cost per TX (s)
@@ -82,7 +82,7 @@ def load_config(path):
     strip = data.get("strip", {})
     bloom = data.get("bloom", {})
     wf = data.get("waterfall", {})
-    style = str(data.get("style", "comet"))
+    style = str(data.get("style", "waterfall"))
     if style not in STYLES:
         raise ValueError(
             f"config: style={style!r} not recognized — must be one of "
