@@ -78,6 +78,7 @@ class Engine:
                 window_seconds=cfg.waterfall_seconds,
                 bytes_per_sec=cfg.waterfall_bytes_per_sec,
                 overhead_sec=cfg.waterfall_overhead_sec,
+                exaggeration=cfg.waterfall_exaggeration,
                 intensity=cfg.waterfall_intensity,
             )
 

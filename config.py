@@ -72,6 +72,7 @@ class Config:
     waterfall_seconds: float         # window of LoRa air shown across the strip
     waterfall_bytes_per_sec: float   # marginal LoRa payload rate (B/s)
     waterfall_overhead_sec: float    # fixed LoRa PHY cost per TX (s)
+    waterfall_exaggeration: float    # visual width multiplier on airtime
     waterfall_intensity: float       # waterfall bar brightness multiplier
 
 
@@ -102,6 +103,7 @@ def load_config(path):
         waterfall_seconds=float(wf.get("window_seconds", 60.0)),
         waterfall_bytes_per_sec=float(wf.get("bytes_per_sec", 340.0)),
         waterfall_overhead_sec=float(wf.get("overhead_sec", 0.030)),
+        waterfall_exaggeration=float(wf.get("exaggeration", 5.0)),
         waterfall_intensity=float(wf.get("intensity", 1.0)),
     )
 

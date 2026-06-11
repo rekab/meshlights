@@ -446,6 +446,7 @@ class Waterfall:
     window_seconds: float
     bytes_per_sec: float
     overhead_sec: float
+    exaggeration: float = 1.0    # visual width multiplier
     intensity: float = 1.0
     # records: deque[(t_arrival: float, airtime_sec: float, color: np.ndarray)]
     # deque (not list) so on_rx and render_loop are correct even if
@@ -482,7 +483,17 @@ class Waterfall:
         for t_rx, airtime, color in snapshot:
             age = t - t_rx
             right_px = (n_px - 1) - age / sec_per_px
-            width_px = airtime / sec_per_px
+            # Position uses real airtime → time axis stays linear (a bar's
+            # right edge IS where it arrived in time). Width is multiplied
+            # by `exaggeration` only, so a bar reaches further into the
+            # past visually than it actually occupied on air. This makes
+            # collisions read truthfully: two packets that arrived close
+            # enough in time to collide in real RF will visibly overlap on
+            # the strip, and the strip "fills up" at roughly the real
+            # channel's saturation point (real LoRa collapses around
+            # 20–30% airtime utilization, so exaggeration ≈ 4–5× maps
+            # "strip visually full" → "channel actually saturated").
+            width_px = (airtime / sec_per_px) * self.exaggeration
             left_px = right_px - width_px
 
             # Sub-pixel anti-aliased horizontal bar. Each integer pixel

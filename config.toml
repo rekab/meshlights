@@ -65,6 +65,16 @@ gamma = 2.0                # PLACEHOLDER — calibrate against rooftop capture, 
 # dark = quiet. Shorten to 5–15 s while calibrating bytes_per_sec /
 # overhead_sec — at 5 s / 71 px = 0.07 s/px, a 12-byte ACK reads as
 # ~0.9 px and a 60-byte TXT_MSG reads as ~3 px, both distinguishable bars.
+# Visual width multiplier on real airtime. Real channel collapses around
+# 20–30% airtime utilization (collision probability runs away), so 4–5×
+# maps "strip visually full" → "real channel saturated" — bars overlap on
+# the strip exactly when their transmissions would have collided in air.
+# Position (right edge = arrival time) stays linear in real time; only
+# WIDTH is multiplied. At 1.0 you get strict isomorphism to airtime; at
+# 5.0 a typical TXT_MSG reads ~5 px at a 15s window. Use 1.0 if you want
+# the strict spectrogram view back.
+exaggeration   = 5.0
+
 window_seconds = 60.0
 bytes_per_sec  = 340.0
 overhead_sec   = 0.030
