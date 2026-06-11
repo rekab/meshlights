@@ -96,7 +96,49 @@ def connect(width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
         print(f"SSD1306 init failed at 0x{addr:02X}: {e}  "
               f"(check wiring; run `i2cdetect -y 1` to scan)", file=sys.stderr)
         return None
+    # SSD1309 cleanup pass — see _force_clean_init() for the why.
+    try:
+        _force_clean_init(oled, height)
+    except Exception as e:
+        print(f"OLED post-init cleanup failed (non-fatal): {e}", file=sys.stderr)
     return Screen(oled, width, height)
+
+
+def _force_clean_init(oled, height):
+    """Resend the full SSD1306/1309-compatible init sequence with a settle
+    delay first. SSD1309 (unlike SSD1306) doesn't power-on-reset itself;
+    modules without a RES pin or with a marginal RC reset network often
+    come up with the controller half-initialized, so the adafruit driver's
+    init commands land in a stuck chip and you get vertical stripes
+    through the rendered content. Sleeping 100 ms after display-off and
+    resending the canonical init sequence reliably clears the stripes
+    because by then the chip is actually awake."""
+    oled.write_cmd(0xAE)                  # display off
+    time.sleep(0.1)                       # let the controller settle
+    seq = (
+        0xD5, 0x80,    # display clock divide ratio / osc freq
+        0xA8, height - 1,  # multiplex ratio (63 for 64-row, 31 for 32-row)
+        0xD3, 0x00,    # display offset = 0
+        0x40,          # display start line = 0
+        0x8D, 0x14,    # charge pump on (modules use the internal pump)
+        0x20, 0x00,    # memory addressing mode: horizontal
+        0xA1,          # segment remap: col 127 → SEG0
+        0xC8,          # COM scan direction: remapped (top-down)
+        0xDA, 0x12 if height == 64 else 0x02,   # COM pins hw config
+        0x81, 0xCF,    # contrast
+        0xD9, 0xF1,    # pre-charge period
+        0xDB, 0x40,    # VCOMH deselect level
+        0xA4,          # display follows GDDRAM (not all-on)
+        0xA6,          # non-inverted
+        0xAF,          # display ON
+    )
+    for byte in seq:
+        oled.write_cmd(byte)
+    time.sleep(0.05)
+    # Explicitly clear GDDRAM so any residual noise from the stuck state
+    # is overwritten before our first real frame.
+    oled.fill(0)
+    oled.show()
 
 
 class _LogLine:
