@@ -2,12 +2,15 @@
 """sim.py — synthetic-input REPL for debugging Meshlights animations.
 
 Drives the real animation engine and real strip with synthetic input,
-no MeshCore connection. Use this when you want to verify rendering
-behavior in isolation:
+no MeshCore connection. Honors `style` from config.toml (or --style on
+the CLI), so you can drive either the comet or waterfall renderer.
+
+Use this when you want to verify rendering behavior in isolation:
   - is the heartbeat actually at the strip's physical center?
   - which physical LED is index 0? which is 143?
   - what does a comet that ends at the strip's edge look like?
   - how long do sparks ACTUALLY linger after a comet passes?
+  - does the waterfall saturation glow kick in around 20% utilization?
 
 A background render thread runs the same composition pipeline as
 engine.py (animations.py classes, additive NumPy framebuffer, direct
@@ -20,19 +23,31 @@ same time.
 Commands (type at the > prompt; 'help' or '?' for this list):
   pixel N [color]      light up LED N (default white) — orientation test
   pixels N,N,N[...]    light up multiple LEDs (default white)
-  comet N1,N2,...           spawn a comet, default TXT_MSG colors (blue/gold)
-  comet TYPE N1,N2,...      spawn a comet with the given payload-type colors
-  randcomet K               K-node random comet, random payload type
-  randcomet K TYPE          K-node random comet, fixed payload type
-  walkup               spawn a white walkup bloom
-  dim [color]          spawn a dim bloom (default cyan)
-  clear                kill all active animations (heartbeat resumes)
-  bright X             set APA102 brightness (0..1) live
-  screen [TEXT]        write TEXT to the OLED (use "|" for line breaks),
-                       or no arg = clear
-  list                 list active animations + ages
-  help | ?
-  q | quit | exit
+
+  Comet-mode commands:
+    comet N1,N2,...            spawn a comet, default TXT_MSG colors (blue/gold)
+    comet TYPE N1,N2,...       spawn a comet with the given payload-type colors
+    walkup                     spawn a white walkup bloom
+    dim [color]                spawn a dim bloom (default cyan)
+
+  Waterfall-mode commands:
+    packet [TYPE] [BYTES]      single RX packet (defaults: TXT_MSG, 60 bytes)
+
+  Mode-aware:
+    randcomet K [TYPE]
+      • in COMET mode: K-hop random comet
+      • in WATERFALL mode: BURST of K random packets — spam this to
+        push utilization past the saturation threshold and watch the
+        red glow rise in the gaps
+
+  Common:
+    clear                kill all active animations (heartbeat resumes)
+    bright X             set APA102 brightness (0..1) live
+    screen [TEXT]        write TEXT to the OLED (use "|" for line breaks),
+                         or no arg = clear
+    list                 list active animations + ages
+    help | ?
+    q | quit | exit
 
   Valid TYPE names: REQ, RESPONSE, TXT_MSG, ACK, ADVERT, GRP_TXT,
                     GRP_DATA, ANON_REQ, PATH
@@ -60,7 +75,7 @@ import animations
 from animations import (
     BASE_DWELL, BASE_TAIL_DURATION, BASE_TRANSIT,
     DIM_BLOOM_DURATION, WALKUP_BLOOM_DURATION,
-    Bloom, Comet, Heartbeat, Walkup,
+    Bloom, Comet, Heartbeat, Walkup, Waterfall,
 )
 from config import (
     HEAD_PALETTE, PALETTE, PAYLOAD_LABELS,
@@ -71,6 +86,14 @@ _LABEL_TO_TYPE = {v: k for k, v in PAYLOAD_LABELS.items()}
 
 def _payload_type_from_label(label):
     return _LABEL_TO_TYPE.get(label.upper())
+
+
+def _hops_str(n):
+    return "1 hop" if n == 1 else f"{n} hops"
+
+
+def _bytes_str(n):
+    return "1 byte" if n == 1 else f"{n} bytes"
 
 
 def _colors_for_type(ptype):
@@ -159,8 +182,8 @@ def make_dim_bloom(cfg, color):
 
 
 class Sim:
-    def __init__(self, config_path):
-        self.cfg = load_config(config_path)
+    def __init__(self, cfg):
+        self.cfg = cfg
         animations.configure(self.cfg.pixels)
         self.strip, self.pixel_view = setup_strip(self.cfg.brightness, self.cfg.pixels)
         self.screen = oled_screen.connect()
@@ -169,10 +192,29 @@ class Sim:
             # attract animation built into screen.py.
             self.screen.show_lines(["meshlights",
                                     f"{self.cfg.pixels} px",
-                                    "ready"], hold=2.0)
+                                    f"{self.cfg.style}"], hold=2.0)
         self.active = []
         # on_traversal_start mirrors the sweep onto the OLED if connected.
         self.heartbeat = Heartbeat(on_traversal_start=self._on_heartbeat_start)
+        # Waterfall is constructed only when cfg.style says so — matches
+        # engine.py's pattern. In waterfall mode, packet commands push
+        # records into self.waterfall and the render loop renders the
+        # waterfall instead of the heartbeat. HoldPattern / active
+        # objects still composite on top (orientation tests work in
+        # either mode).
+        self.waterfall = None
+        if self.cfg.style == "waterfall":
+            self.waterfall = Waterfall(
+                n_pixels=self.cfg.pixels,
+                window_seconds=self.cfg.waterfall_seconds,
+                bytes_per_sec=self.cfg.waterfall_bytes_per_sec,
+                overhead_sec=self.cfg.waterfall_overhead_sec,
+                exaggeration=self.cfg.waterfall_exaggeration,
+                intensity=self.cfg.waterfall_intensity,
+                glow_threshold=self.cfg.waterfall_glow_threshold,
+                glow_peak=self.cfg.waterfall_glow_peak,
+                glow_color=self.cfg.waterfall_glow_color,
+            )
         self.lock = threading.Lock()
         self.stop = False
         self.render_thread = threading.Thread(target=self._render_loop, daemon=True)
@@ -185,9 +227,19 @@ class Sim:
             fb.fill(0.0)
             with self.lock:
                 snapshot = list(self.active)
-            # Heartbeat renders first; comets composite on top. busy gate
-            # suspends new traversal starts while comets are active.
-            self.heartbeat.render(fb, t, busy=bool(snapshot))
+            if self.waterfall is not None:
+                # Waterfall renders the strip; orientation HoldPatterns
+                # and any comet-mode objects (if someone spawned them
+                # anyway) composite ON TOP, additively.
+                try:
+                    self.waterfall.render(fb, t)
+                except Exception as e:
+                    print(f"waterfall render error: {e}", file=sys.stderr)
+            else:
+                # Heartbeat renders first; comets composite on top. busy
+                # gate suspends new traversal starts while comets are
+                # active.
+                self.heartbeat.render(fb, t, busy=bool(snapshot))
             for obj in snapshot:
                 obj.render(fb, t)
                 if obj.is_done(t):
@@ -211,11 +263,25 @@ class Sim:
         with self.lock:
             self.active.append(obj)
 
-    def log_packet(self, label, hops, duration_s):
-        """Mirror the spawn onto the OLED log (no-op when no screen)."""
+    def add_packet(self, n_bytes, color_arr, label):
+        """Push a synthetic RX into the waterfall + OLED log. Waterfall-only;
+        raises if called in comet mode."""
+        if self.waterfall is None:
+            raise RuntimeError("waterfall not enabled — start sim with "
+                               "--style waterfall (or set style in config.toml)")
+        # `add` is thread-safe via CPython's atomic deque ops; no need to
+        # take self.lock (which guards self.active, not the waterfall).
+        self.waterfall.add(time.monotonic(), n_bytes, color_arr)
+        self.log_packet(label, _bytes_str(n_bytes), 5.0)
+
+    def log_packet(self, label, detail, duration_s):
+        """Mirror the spawn onto the OLED log (no-op when no screen).
+        `detail` is a pre-formatted trailing token, e.g. "3 hops" or
+        "60 bytes" — caller picks the most informative summary for its
+        mode (matches engine.py)."""
         if self.screen is None:
             return
-        self.screen.push_packet(label, hops, duration_s)
+        self.screen.push_packet(label, detail, duration_s)
 
     def _on_heartbeat_start(self, t):
         if self.screen is not None:
@@ -233,8 +299,13 @@ class Sim:
     def list_active(self):
         now = time.monotonic()
         with self.lock:
-            return [(type(o).__name__, now - getattr(o, "start_time", now))
-                    for o in self.active]
+            items = [(type(o).__name__, now - getattr(o, "start_time", now))
+                     for o in self.active]
+        if self.waterfall is not None:
+            # Snapshot the deque count without holding the deque (deque
+            # mutations are atomic in CPython, len() reads cleanly).
+            items.append((f"Waterfall ({len(self.waterfall.records)} pkts)", 0.0))
+        return items
 
     def shutdown(self):
         self.stop = True
@@ -312,44 +383,81 @@ def handle(sim, cmd, arg):
         color, head_color, label = _colors_for_type(ptype)
         comet = make_comet(sim.cfg, nodes, color=color, head_color=head_color)
         sim.add(comet)
-        sim.log_packet(label, len(nodes), comet.total_duration())
+        sim.log_packet(label, _hops_str(len(nodes)), comet.total_duration())
         print(f"spawned {label} comet {nodes}")
 
     elif cmd == "randcomet":
-        # `randcomet K` (K random pixel positions, random payload type) or
-        # `randcomet K TYPE` (K random positions, fixed type).
+        # `randcomet K [TYPE]`. Behavior depends on mode:
+        #   COMET     — one K-hop random comet
+        #   WATERFALL — burst of K random packets (1 per K), each
+        #               with random byte size from 12..150 (ACK to
+        #               near-MTU). Spam this to push utilization past
+        #               the saturation threshold and watch the glow
+        #               rise.
         parts = arg.split(None, 1) if arg else []
         k = int(parts[0]) if parts else 3
-        ptype = None
+        ptype_fixed = None
         if len(parts) == 2:
-            label = parts[1].upper()
-            ptype = _payload_type_from_label(label)
-            if ptype is None:
-                raise ValueError(f"unknown payload type {label!r}; one of "
+            type_label = parts[1].upper()
+            ptype_fixed = _payload_type_from_label(type_label)
+            if ptype_fixed is None:
+                raise ValueError(f"unknown payload type {type_label!r}; one of "
                                  f"{sorted(PAYLOAD_LABELS.values())}")
+
+        if sim.waterfall is not None:
+            total_bytes = 0
+            for _ in range(k):
+                ptype = ptype_fixed if ptype_fixed is not None else random.choice(list(PALETTE.keys()))
+                n_bytes = random.randint(12, 150)
+                color, _h, label = _colors_for_type(ptype)
+                sim.add_packet(n_bytes, np.array(color, dtype=np.float32), label)
+                total_bytes += n_bytes
+            print(f"fired {k} random packets (total {total_bytes} bytes)")
         else:
-            ptype = random.choice(list(PALETTE.keys()))
-        nodes = [random.randint(0, sim.cfg.pixels - 1) for _ in range(k)]
-        color, head_color, label = _colors_for_type(ptype)
-        comet = make_comet(sim.cfg, nodes, color=color, head_color=head_color)
-        sim.add(comet)
-        sim.log_packet(label, len(nodes), comet.total_duration())
-        print(f"spawned random {label} comet {nodes}")
+            ptype = ptype_fixed if ptype_fixed is not None else random.choice(list(PALETTE.keys()))
+            nodes = [random.randint(0, sim.cfg.pixels - 1) for _ in range(k)]
+            color, head_color, label = _colors_for_type(ptype)
+            comet = make_comet(sim.cfg, nodes, color=color, head_color=head_color)
+            sim.add(comet)
+            sim.log_packet(label, _hops_str(len(nodes)), comet.total_duration())
+            print(f"spawned random {label} comet {nodes}")
 
     elif cmd == "walkup":
         wu = make_walkup(sim.cfg)
         sim.add(wu)
         # Walkup branch is triggered by hop-0 ADVERTs above the RSSI
         # threshold — represent honestly as such on the OLED log.
-        sim.log_packet("ADVERT", 0, wu.total_duration())
+        sim.log_packet("ADVERT", _hops_str(0), wu.total_duration())
         print("spawned walkup")
 
     elif cmd == "dim":
         color = parse_color(arg) if arg else COLOR_ALIASES["cyan"]
         bloom = make_dim_bloom(sim.cfg, color)
         sim.add(bloom)
-        sim.log_packet("DIM", 0, bloom.total_duration())
+        sim.log_packet("DIM", _hops_str(0), bloom.total_duration())
         print(f"spawned dim bloom {color}")
+
+    elif cmd == "packet":
+        # `packet [TYPE] [BYTES]` — single waterfall RX. Both args
+        # optional and order-insensitive (BYTES is the int, TYPE is the
+        # label). Defaults: TXT_MSG, 60 bytes.
+        if sim.waterfall is None:
+            raise ValueError("`packet` is waterfall-only — start sim "
+                             "with --style waterfall")
+        ptype = 0x02      # TXT_MSG
+        n_bytes = 60
+        for tok in arg.split():
+            if tok.isdigit():
+                n_bytes = int(tok)
+            else:
+                pt = _payload_type_from_label(tok)
+                if pt is None:
+                    raise ValueError(f"unknown payload type {tok!r}; one of "
+                                     f"{sorted(PAYLOAD_LABELS.values())}")
+                ptype = pt
+        color, _h, label = _colors_for_type(ptype)
+        sim.add_packet(n_bytes, np.array(color, dtype=np.float32), label)
+        print(f"fired {label} packet ({n_bytes} bytes)")
 
     elif cmd == "bright":
         b = float(arg)
@@ -375,12 +483,20 @@ def handle(sim, cmd, arg):
 
 def main():
     import argparse
+    import dataclasses
     ap = argparse.ArgumentParser(description="Synthetic-input REPL for Meshlights animations.")
     ap.add_argument("--config", default="config.toml")
+    ap.add_argument("--style", choices=("comet", "waterfall"),
+                    help="override [style] from config.toml")
     args = ap.parse_args()
 
-    sim = Sim(args.config)
-    print(f"sim ready: {sim.cfg.pixels} px, brightness={sim.cfg.brightness:.2f}")
+    cfg = load_config(args.config)
+    if args.style is not None:
+        cfg = dataclasses.replace(cfg, style=args.style)
+
+    sim = Sim(cfg)
+    print(f"sim ready: {sim.cfg.pixels} px, brightness={sim.cfg.brightness:.2f}, "
+          f"style={sim.cfg.style}")
     print("type 'help' for commands. Ctrl-D or 'q' to exit.")
     try:
         while True:
