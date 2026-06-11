@@ -20,11 +20,13 @@ Cycles automatically every 3 s. Ctrl-C to stop.
 
 Run:   uv run python utils/screen_debug.py
 
-Optional: try alternative rotations and COM pin configs to find what
-works for THIS specific panel.
+Optional: override individual SSD1309 registers to chase column-ghosting.
+Default values are luma's (which assume SSD1306).
 
   uv run python utils/screen_debug.py --rotate 2
-  uv run python utils/screen_debug.py --com-pins 0x22
+  uv run python utils/screen_debug.py --precharge 0x11 --vcomh 0x00
+  uv run python utils/screen_debug.py --precharge 0x82 --contrast 0x40
+  uv run python utils/screen_debug.py --no-charge-pump  # if module has external boost
 """
 
 import argparse
@@ -75,7 +77,8 @@ def draw_pattern(name, w, h):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--addr", type=lambda x: int(x, 0), default=0x3C)
+    hex_arg = lambda x: int(x, 0)
+    ap.add_argument("--addr", type=hex_arg, default=0x3C)
     ap.add_argument("--width", type=int, default=128)
     ap.add_argument("--height", type=int, default=64)
     ap.add_argument("--rotate", type=int, default=0,
@@ -84,6 +87,18 @@ def main():
                     help="seconds per pattern")
     ap.add_argument("--once", action="store_true",
                     help="run through patterns once and exit")
+    # SSD1309 retune registers (override luma's SSD1306 defaults)
+    ap.add_argument("--precharge", type=hex_arg, default=None,
+                    help="SETPRECHARGE (0xD9): luma default 0xF1. Try 0x22, "
+                         "0x11, 0x82, 0xF1.")
+    ap.add_argument("--vcomh", type=hex_arg, default=None,
+                    help="SETVCOMDETECT (0xDB): luma default 0x40. Try 0x00, "
+                         "0x20, 0x30.")
+    ap.add_argument("--contrast", type=hex_arg, default=None,
+                    help="Contrast 0x00..0xFF: luma default 0xCF.")
+    ap.add_argument("--no-charge-pump", action="store_true",
+                    help="Disable internal charge pump (CHARGEPUMP 0x8D 0x10) "
+                         "— for modules with external boost circuitry.")
     args = ap.parse_args()
 
     serial = i2c(port=1, address=args.addr)
@@ -91,6 +106,20 @@ def main():
                    rotate=args.rotate)
     print(f"SSD1309 up: {args.width}x{args.height} rotate={args.rotate} "
           f"addr=0x{args.addr:02X}")
+
+    # Apply register overrides AFTER luma init.
+    if args.precharge is not None:
+        oled.command(0xD9, args.precharge)
+        print(f"  SETPRECHARGE = 0x{args.precharge:02X}")
+    if args.vcomh is not None:
+        oled.command(0xDB, args.vcomh)
+        print(f"  SETVCOMDETECT = 0x{args.vcomh:02X}")
+    if args.contrast is not None:
+        oled.contrast(args.contrast)
+        print(f"  CONTRAST = 0x{args.contrast:02X}")
+    if args.no_charge_pump:
+        oled.command(0x8D, 0x10)
+        print("  CHARGEPUMP disabled")
 
     patterns = ["solid_white", "solid_black", "halves", "row_grid",
                 "col_grid", "corner_markers", "diagonal", "checkerboard"]
