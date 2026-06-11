@@ -37,8 +37,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from luma.core.interface.serial import i2c
-from luma.oled.device import ssd1309
+from luma.oled.device import sh1106, ssd1306, ssd1309
 from PIL import Image, ImageDraw
+
+
+DRIVERS = {"ssd1309": ssd1309, "ssd1306": ssd1306, "sh1106": sh1106}
 
 
 def draw_pattern(name, w, h):
@@ -102,15 +105,25 @@ def main():
     ap.add_argument("--no-charge-pump", action="store_true",
                     help="Disable internal charge pump (CHARGEPUMP 0x8D 0x10) "
                          "— for modules with external boost circuitry.")
+    ap.add_argument("--driver", choices=tuple(DRIVERS), default="ssd1309",
+                    help="Try a different controller (some modules labeled "
+                         "SSD1309 ship with SH1106 silicon).")
+    ap.add_argument("--clock", type=hex_arg, default=None,
+                    help="SETDISPLAYCLOCKDIV (0xD5): luma default 0x80. "
+                         "Try 0xF0 to push the internal scan rate higher.")
     args = ap.parse_args()
 
     serial = i2c(port=1, address=args.addr)
-    oled = ssd1309(serial, width=args.width, height=args.height,
-                   rotate=args.rotate)
-    print(f"SSD1309 up: {args.width}x{args.height} rotate={args.rotate} "
+    driver_cls = DRIVERS[args.driver]
+    oled = driver_cls(serial, width=args.width, height=args.height,
+                      rotate=args.rotate)
+    print(f"{args.driver} up: {args.width}x{args.height} rotate={args.rotate} "
           f"addr=0x{args.addr:02X}")
 
     # Apply register overrides AFTER luma init.
+    if args.clock is not None:
+        oled.command(0xD5, args.clock)
+        print(f"  SETDISPLAYCLOCKDIV = 0x{args.clock:02X}")
     if args.precharge is not None:
         oled.command(0xD9, args.precharge)
         print(f"  SETPRECHARGE = 0x{args.precharge:02X}")
