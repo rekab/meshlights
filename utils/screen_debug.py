@@ -87,6 +87,9 @@ def main():
                     help="seconds per pattern")
     ap.add_argument("--once", action="store_true",
                     help="run through patterns once and exit")
+    ap.add_argument("--ghost", action="store_true",
+                    help="only show corner_markers + diagonal (the two patterns "
+                         "that surface column ghosting)")
     # SSD1309 retune registers (override luma's SSD1306 defaults)
     ap.add_argument("--precharge", type=hex_arg, default=None,
                     help="SETPRECHARGE (0xD9): luma default 0xF1. Try 0x22, "
@@ -121,8 +124,11 @@ def main():
         oled.command(0x8D, 0x10)
         print("  CHARGEPUMP disabled")
 
-    patterns = ["solid_white", "solid_black", "halves", "row_grid",
-                "col_grid", "corner_markers", "diagonal", "checkerboard"]
+    if args.ghost:
+        patterns = ["corner_markers", "diagonal"]
+    else:
+        patterns = ["solid_white", "solid_black", "halves", "row_grid",
+                    "col_grid", "corner_markers", "diagonal", "checkerboard"]
     try:
         while True:
             for name in patterns:
