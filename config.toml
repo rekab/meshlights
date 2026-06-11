@@ -52,28 +52,32 @@ gamma = 2.0                # PLACEHOLDER — calibrate against rooftop capture, 
 #
 # Defaults are tuned for the deployment preset SF7 / BW62.5 / CR4-5:
 #   - overhead_sec 0.030 ≈ 8-symbol preamble (~25 ms) + a few PHY-header
-#     symbols. SF7/BW62.5 T_sym = 2.048 ms. (Strict modelling of the
-#     8 fixed sync symbols + explicit-header cost at PL=0 pushes this to
-#     ~50 ms — the 0.030 default trades that off; calibrate empirically.)
-#   - bytes_per_sec 340 ≈ marginal payload rate at SF7/BW62.5/CR4-5.
-#     (Lower SF or larger BW: faster. SF8 BW125 ≈ 1.5 kB/s.)
-#
-# window_seconds vs visibility: at 15 s / 71 px = 0.21 s/px, a 12-byte
-# ACK reads ~0.3 px and a 60-byte TXT ~1.0 px — packets are
-# distinguishable bars (and at exaggeration=5 below, they're 5× that).
-# Widen to 60 s for a pure-spectrogram view where individual packets
-# are sub-pixel and brightness encodes aggregate channel occupancy.
-# Visual width multiplier on real airtime. Real channel collapses around
-# 20–30% airtime utilization (collision probability runs away), so 4–5×
-# maps "strip visually full" → "real channel saturated" — bars overlap on
-# the strip exactly when their transmissions would have collided in air.
-# Position (right edge = arrival time) stays linear in real time; only
-# WIDTH is multiplied. At 1.0 you get strict isomorphism to airtime; at
-# 5.0 a typical TXT_MSG reads ~5 px at a 15s window. Use 1.0 if you want
-# the strict spectrogram view back.
-exaggeration   = 5.0
-
-window_seconds = 15.0
+#     symbols. SF7/BW62.5 T_sym = 2.048 ms.
+#   - bytes_per_sec 340 ≈ marginal payload rate at the same preset.
+#   - window_seconds 7.0 + exaggeration 1.0 gives an HONEST 1:1 view —
+#     1 px = window_seconds/n_pixels of channel time (~100 ms/px at
+#     7 s / 71 px), and bar widths are real airtime in those units.
+#     Total lit pixels / total pixels = real channel utilization
+#     fraction. Crank exaggeration to 4–5 to dramatize collisions (each
+#     bar 5× wider than its real airtime) at the cost of "1 px = X ms"
+#     no longer holding. Widen window_seconds to 60 for a pure
+#     brightness-encoded spectrogram view.
+window_seconds = 7.0
 bytes_per_sec  = 340.0
 overhead_sec   = 0.030
+exaggeration   = 1.0
 intensity      = 1.0
+
+# Saturation glow. LoRa is ALOHA-class — throughput collapses past
+# ~20–30% airtime utilization (S = G·e^(-2G) peaks at G≈0.5 with
+# S≈18%, and the per-packet collision rate is 1 - e^(-2G), so 20%
+# utilization already means ~33% collisions). When in-window
+# utilization climbs past glow_threshold, every UNcovered pixel gets a
+# baseline glow that ramps from 0 to glow_peak as utilization approaches
+# 2× glow_threshold (40% by default). Bar pixels are unaffected — the
+# glow lives BEHIND the bars, payload color stays honest. Quiet channel
+# = dark gaps. Saturated channel = warm-red gaps under the bars.
+# Set glow_peak = 0 to disable.
+glow_threshold = 0.20
+glow_peak      = 0.15
+glow_color     = [255, 0, 0]

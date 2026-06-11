@@ -74,6 +74,9 @@ class Config:
     waterfall_overhead_sec: float    # fixed LoRa PHY cost per TX (s)
     waterfall_exaggeration: float    # visual width multiplier on airtime
     waterfall_intensity: float       # waterfall bar brightness multiplier
+    waterfall_glow_threshold: float  # utilization fraction where saturation glow starts
+    waterfall_glow_peak: float       # peak brightness of the saturation glow
+    waterfall_glow_color: tuple      # RGB (0..255) color of the saturation glow
 
 
 def load_config(path):
@@ -103,9 +106,23 @@ def load_config(path):
         waterfall_seconds=float(wf.get("window_seconds", 60.0)),
         waterfall_bytes_per_sec=float(wf.get("bytes_per_sec", 340.0)),
         waterfall_overhead_sec=float(wf.get("overhead_sec", 0.030)),
-        waterfall_exaggeration=float(wf.get("exaggeration", 5.0)),
+        waterfall_exaggeration=float(wf.get("exaggeration", 1.0)),
         waterfall_intensity=float(wf.get("intensity", 1.0)),
+        waterfall_glow_threshold=float(wf.get("glow_threshold", 0.20)),
+        waterfall_glow_peak=float(wf.get("glow_peak", 0.15)),
+        waterfall_glow_color=_parse_rgb(wf.get("glow_color", (255, 0, 0)),
+                                       field="[waterfall] glow_color",
+                                       path=path),
     )
+
+
+def _parse_rgb(value, field, path):
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise ValueError(
+            f"config: {field} must be a 3-element RGB list, "
+            f"got {value!r} in {path}."
+        )
+    return tuple(int(x) for x in value)
 
 
 # payload_type → human label. Single source of truth, imported by both

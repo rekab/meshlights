@@ -446,8 +446,11 @@ class Waterfall:
     window_seconds: float
     bytes_per_sec: float
     overhead_sec: float
-    exaggeration: float = 1.0    # visual width multiplier
+    exaggeration: float = 1.0       # visual width multiplier
     intensity: float = 1.0
+    glow_threshold: float = 0.0     # 0 disables the saturation glow
+    glow_peak: float = 0.0          # peak brightness of the saturation glow
+    glow_color: tuple = (255, 0, 0)
     # records: deque[(t_arrival: float, airtime_sec: float, color: np.ndarray)]
     # deque (not list) so on_rx and render_loop are correct even if
     # meshcore ever dispatches off the asyncio loop — append (tail) and
@@ -476,6 +479,15 @@ class Waterfall:
         while self.records and (t - self.records[0][0]) >= cutoff_age:
             self.records.popleft()
 
+        # Per-pixel bar coverage in [0..1]. Used after the bar loop to
+        # subtract glow from bar-covered pixels so packet color stays
+        # honest — the glow sits BEHIND the bars, not blended into them.
+        coverage = np.zeros(n_px, dtype=np.float32)
+        # Sum of airtimes of in-window records → channel utilization
+        # for the saturation glow. Slack-zone records are excluded so
+        # we don't over-count past the visible window.
+        total_airtime = 0.0
+
         # Snapshot for iteration. A concurrent append (if dispatch is
         # ever threaded) lands after the snapshot view and shows up next
         # frame — preferable to mutating-during-iterate.
@@ -484,6 +496,8 @@ class Waterfall:
             age = t - t_rx
             if age < 0.0:
                 continue
+            if age < self.window_seconds:
+                total_airtime += airtime
             # Two-phase rendering:
             #  - During age < airtime: the packet is "arriving live." Right
             #    edge pinned to the rightmost pixel (the live edge of the
@@ -527,3 +541,23 @@ class Waterfall:
                 cov = min(i + 1, right_px) - max(i, left_px)
                 if cov > 0.0:
                     fb[i] += color * (cov * self.intensity)
+                    coverage[i] += cov
+
+        # Saturation glow. Real LoRa is ALOHA-class — collisions are
+        # whoever-talked-during-this-2T-window — and the throughput
+        # curve S = G·exp(-2G) collapses past ~20–30% airtime
+        # utilization. So when in-window utilization climbs past
+        # glow_threshold, every UNcovered pixel gets a baseline glow
+        # that ramps from 0 to glow_peak as utilization approaches 2×
+        # threshold. Bar-covered pixels are spared via the
+        # (1 - coverage) factor — the glow is purely a backdrop,
+        # bars sit on top in their honest payload color.
+        if self.glow_peak > 0.0 and self.glow_threshold > 0.0:
+            util = total_airtime / self.window_seconds
+            if util > self.glow_threshold:
+                if not isinstance(self.glow_color, np.ndarray):
+                    self.glow_color = np.array(self.glow_color, dtype=np.float32)
+                ramp = (util - self.glow_threshold) / self.glow_threshold
+                frac = ramp if ramp < 1.0 else 1.0
+                np.clip(coverage, 0.0, 1.0, out=coverage)
+                fb += ((self.glow_peak * frac) * (1.0 - coverage))[:, None] * self.glow_color

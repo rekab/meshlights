@@ -243,18 +243,25 @@ Top-level `style = "waterfall"` (default) or `"comet"` in `config.toml`,
 overridable with `--style` on the CLI.
 
 **Waterfall** turns the strip into a scrolling channel-occupancy spectrogram.
-Each RX packet renders as an additive bar — right edge at the moment of
-arrival, sliding left, color = payload type, width ∝ airtime. Bars overlap
-visually exactly when the underlying transmissions overlapped on air — so
-collisions and channel saturation read truthfully. Knobs in `[waterfall]`:
+Each RX packet renders as an additive bar — right edge pinned to the live
+pixel while the packet is "being received" (over its real airtime, in real
+time), then locking at full width and scrolling left. Color = payload type,
+width ∝ airtime. Bars overlap visually exactly when the underlying
+transmissions overlapped on air — so collisions read truthfully. A red
+"saturation glow" rises in the gaps when in-window utilization passes the
+ALOHA-collapse threshold (~20–30%), so a busy channel visibly warms even
+when individual packets are small. Knobs in `[waterfall]`:
 
 | Knob | Default | What it does |
 |---|---|---|
-| `window_seconds` | `15.0` | How much LoRa air the full strip represents. Shorter = individual packets read as visible bars; longer (e.g. 60 s) = pure spectrogram view where individual packets are sub-pixel and brightness encodes aggregate occupancy. |
+| `window_seconds` | `7.0` | How much LoRa air the full strip represents. At 7 s / 71 px the strip resolves at ~100 ms/px, so a typical TXT_MSG (~206 ms airtime) reads as ~2 px and an ACK (~65 ms) reads as ~0.7 px. Widen (15–60 s) for more channel history at smaller bars; shorten (3–5 s) to see packet detail. |
 | `bytes_per_sec` | `340.0` | Marginal LoRa payload rate at SF7 / BW62.5 / CR4-5. Drop for slower presets (SF12/BW250 ≈ 22; SF10 ≈ 88), raise for faster ones (SF8/BW125 ≈ 1500). |
 | `overhead_sec` | `0.030` | Fixed LoRa PHY cost (preamble + explicit header) per transmission. Without this, small packets (ACKs) hit the floor and disappear. |
-| `exaggeration` | `5.0` | Visual width multiplier on real airtime. Real LoRa channels collapse around 20–30% airtime utilization, so 4–5× maps "strip visually full" → "real channel saturated" — collisions read truthfully (overlapping bars = overlapping transmissions). Set to `1.0` for strict 1:1 isomorphism. |
+| `exaggeration` | `1.0` | Visual width multiplier on real airtime. At `1.0` the strip is honest 1:1 — fraction of strip lit = fraction of channel time used, so 20% lit = real saturation. Crank to `4.0–5.0` to dramatize channel pressure (each bar 5× wider than real airtime) at the cost of breaking the 1 px = X ms reading. |
 | `intensity` | `1.0` | Overall bar brightness multiplier on top of `strip.brightness`. |
+| `glow_threshold` | `0.20` | Channel utilization fraction at which the saturation glow begins (default 20%, matching LoRa's ALOHA collapse threshold). |
+| `glow_peak` | `0.15` | Peak brightness of the saturation glow at 2× threshold utilization (40% by default). Set `0` to disable. |
+| `glow_color` | `[255, 0, 0]` | RGB (0..255) color of the saturation glow. Lives BEHIND the packet bars — bar pixels keep their honest payload color; only gap pixels show the glow. |
 
 **Comet** spawns a per-packet animation that walks the route across the
 strip: each hop is a dwell-and-transit step in the payload-type color,
