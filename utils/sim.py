@@ -186,7 +186,8 @@ class Sim:
         self.cfg = cfg
         animations.configure(self.cfg.pixels)
         self.strip, self.pixel_view = setup_strip(self.cfg.brightness, self.cfg.pixels)
-        self.screen = oled_screen.connect(driver=self.cfg.oled_driver)
+        self.screen = oled_screen.connect(driver=self.cfg.oled_driver,
+                                          style=self.cfg.style)
         if self.screen is not None:
             # Show a startup banner for 2s, then auto-dismiss to the idle
             # attract animation built into screen.py.
@@ -272,7 +273,12 @@ class Sim:
         # `add` is thread-safe via CPython's atomic deque ops; no need to
         # take self.lock (which guards self.active, not the waterfall).
         self.waterfall.add(time.monotonic(), n_bytes, color_arr)
-        self.log_packet(label, _bytes_str(n_bytes), 5.0)
+        # OLED line tracks the bar's strip lifetime so it slides off the
+        # right exactly when the bar exits the left edge of the strip.
+        airtime = (self.cfg.waterfall_overhead_sec
+                   + max(n_bytes, 0) / self.cfg.waterfall_bytes_per_sec)
+        lifetime = self.cfg.waterfall_seconds + airtime
+        self.log_packet(label, _bytes_str(n_bytes), lifetime)
 
     def log_packet(self, label, detail, duration_s):
         """Mirror the spawn onto the OLED log (no-op when no screen).

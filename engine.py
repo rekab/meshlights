@@ -128,11 +128,17 @@ class Engine:
             )
             if self.screen is not None:
                 try:
-                    # OLED log line lifetime is unrelated to the strip
-                    # bar width — keep the line readable for ~5 s
-                    # regardless of airtime.
+                    # OLED line stays alive exactly while the bar is on
+                    # the strip: bar lifetime = airtime (the scroll-on
+                    # phase) + window_seconds (the scroll-left phase).
+                    # When the bar fully exits the left edge, the line
+                    # hits expires_at and slides off the right of the
+                    # OLED (matching the strip semantics).
+                    airtime = (self.cfg.waterfall_overhead_sec
+                               + max(n_bytes, 0) / self.cfg.waterfall_bytes_per_sec)
+                    lifetime = self.cfg.waterfall_seconds + airtime
                     detail = "1 byte" if n_bytes == 1 else f"{n_bytes} bytes"
-                    self.screen.push_packet(label, detail, 5.0)
+                    self.screen.push_packet(label, detail, lifetime)
                 except Exception as e:
                     print(f"screen push_packet error: {e}", file=sys.stderr)
             if self.debug:
@@ -388,7 +394,7 @@ async def main():
     print(f"strip up ({cfg.pixels} px, hardware SPI0, brightness={cfg.brightness:.2f})")
 
     # Optional OLED status screen (best-effort — None if i2c/panel missing).
-    screen = oled_screen.connect(driver=cfg.oled_driver)
+    screen = oled_screen.connect(driver=cfg.oled_driver, style=cfg.style)
     if screen is not None:
         print("OLED up (idle attract + packet log)")
         screen.show_lines(["meshlights",

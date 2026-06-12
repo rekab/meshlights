@@ -76,6 +76,8 @@ FONT_SIZE = 11
 LINE_HEIGHT = 12              # vertical step per log line (px)
 GRAVITY_PX_PER_SEC2 = 280.0   # downward acceleration for falling lines
 DIE_SLIDE_PX_PER_SEC = 180.0  # horizontal velocity when a line dies + scrolls off
+SCROLL_DOWN_PX_PER_SEC = 80.0 # waterfall mode: vertical slide speed toward target_y
+                              # (≈ 150 ms per line_h step — snappy, doesn't lag bursts)
 
 
 def _load_font():
@@ -87,11 +89,15 @@ def _load_font():
     return ImageFont.load_default()
 
 
-def connect(driver="ssd1309", width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
+def connect(driver="ssd1309", style="comet", width=DEFAULT_W,
+            height=DEFAULT_H, addr=DEFAULT_ADDR):
     """Bring up the OLED via luma.oled. `driver` is one of
     'ssd1309' / 'ssd1306' / 'sh1106' — see `[oled] driver` in
-    config.toml. Returns a Screen on success or None if the panel can't
-    be reached."""
+    config.toml. `style` ("comet" or "waterfall") selects the log
+    physics model: comet has gravity-stacked rain, waterfall has a
+    newest-on-top stack with bottom-overflow falling.
+    Returns a Screen on success or None if the panel can't be
+    reached."""
     if not _LUMA_AVAILABLE:
         return None
     if driver not in _DRIVERS:
@@ -114,7 +120,7 @@ def connect(driver="ssd1309", width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_AD
         return None
     if driver == "ssd1309":
         _retune_ssd1309(oled)
-    return Screen(oled, width, height)
+    return Screen(oled, width, height, style=style)
 
 
 def _retune_ssd1309(oled):
@@ -135,16 +141,22 @@ def _retune_ssd1309(oled):
 
 
 class _LogLine:
-    __slots__ = ("text", "born_at", "expires_at", "y", "vy", "x", "dying")
+    __slots__ = ("text", "born_at", "expires_at", "y", "target_y", "vy", "x", "dying", "falling")
 
-    def __init__(self, text, born_at, expires_at, y):
+    def __init__(self, text, born_at, expires_at, y, target_y=None):
         self.text = text
         self.born_at = born_at
         self.expires_at = expires_at
         self.y = float(y)
+        # Waterfall mode targets a position; comet mode leaves this equal
+        # to y (gravity model doesn't read it).
+        self.target_y = float(y if target_y is None else target_y)
         self.vy = 0.0
         self.x = 0.0
         self.dying = False
+        # True once a waterfall-mode line has been pushed past the panel
+        # floor and is now falling off the bottom under gravity.
+        self.falling = False
 
 
 class _IdleAnim:
@@ -287,10 +299,21 @@ class _IdleAnim:
 
 
 class Screen:
-    def __init__(self, oled, width, height):
+    def __init__(self, oled, width, height, style="comet"):
         self.oled = oled
         self.width = width
         self.height = height
+        # Log physics model:
+        #   "comet"     — original packet-rain (lines fall from above
+        #                 under gravity, stack on the floor, slide
+        #                 right at expires_at).
+        #   "waterfall" — newest-on-top stack (new line at y=0 pushes
+        #                 every other line down by line_h, lines slide
+        #                 right at expires_at — meaning when their
+        #                 packet bar scrolls off the strip — and any
+        #                 line pushed past the panel floor falls off
+        #                 the bottom under gravity).
+        self._log_style = style
         self.font = _load_font()
         self._img = Image.new("1", (width, height))
         self._draw = ImageDraw.Draw(self._img)
@@ -399,15 +422,33 @@ class Screen:
         """Append a packet line formatted as "LABEL DETAIL" (e.g.
         "TXT_MSG 60 bytes" in waterfall mode, "TXT_MSG 3 hops" in comet
         mode — the caller picks the trailing token since each style has
-        its own most-informative summary). The line spawns just above
-        the top of the panel (above any in-flight new lines) and falls
-        under gravity onto the stack."""
+        its own most-informative summary).
+
+        Comet mode: spawns just above the top of the panel (above any
+        in-flight new lines) and falls under gravity onto the stack.
+        Waterfall mode: spawns at y=0 and bumps every other live line's
+        target_y down by LINE_HEIGHT. Lines whose target_y crosses the
+        panel floor switch to a gravity-fall — falling off the bottom."""
         text = f"{label} {detail}"
         with self._lock:
             born = time.monotonic()
-            # Spawn at -LINE_HEIGHT, or above the highest in-flight line if
-            # one is still falling. Keeps rapid-fire pushes stacking cleanly
-            # instead of all spawning at the same y.
+            if self._log_style == "waterfall":
+                # Push every alive line down one slot. If pushed past the
+                # panel floor, switch to gravity-fall mode.
+                for line in self._log_lines:
+                    if line.dying:
+                        continue
+                    line.target_y += LINE_HEIGHT
+                    if line.target_y >= self.height and not line.falling:
+                        line.falling = True
+                        line.vy = 0.0
+                self._log_lines.append(_LogLine(
+                    text=text, born_at=born,
+                    expires_at=born + duration_s,
+                    y=0.0, target_y=0.0,
+                ))
+                return
+            # Comet mode (original spawn-above-panel rain):
             spawn_y = float(-LINE_HEIGHT)
             for line in self._log_lines:
                 if line.dying:
@@ -501,11 +542,13 @@ class Screen:
             y += line_h
 
     def _tick_and_render_log(self, t):
-        """Physics step + render. Bottom-up processing so an upper line's
-        floor calc sees the post-update y of the line directly below it,
-        which keeps stacks glued together as the lower line falls. A
-        resting line inherits its support's vy so the whole tower drops
-        in lockstep when the bottom block tumbles."""
+        """Physics step + render. Comet mode uses a gravity model
+        (bottom-up processing, stacks glued via shared vy); waterfall
+        mode uses a target-position slide (push others down on arrival,
+        gravity-fall once pushed off the bottom)."""
+        if self._log_style == "waterfall":
+            self._tick_waterfall_log(t)
+            return
         line_h = LINE_HEIGHT
         dt = 1.0 / FRAME_RATE
 
@@ -549,6 +592,51 @@ class Screen:
                 line.y = new_y
 
         # Cull lines that have left the panel.
+        self._log_lines = [
+            l for l in self._log_lines
+            if l.x < self.width and l.y < self.height
+        ]
+
+        for line in self._log_lines:
+            self._draw.text((int(line.x), int(line.y)), line.text,
+                            font=self.font, fill=255)
+
+    def _tick_waterfall_log(self, t):
+        """Waterfall log physics:
+          - Dying lines slide right off the panel (same as comet mode).
+          - Falling lines (pushed past the bottom by newer arrivals)
+            accelerate downward under gravity until they exit.
+          - Otherwise lines ease toward their target_y at a constant
+            slide speed — newest at y=0, oldest at the bottom of the
+            stack. push_packet bumps target_y on existing lines as
+            new ones arrive."""
+        dt = 1.0 / FRAME_RATE
+
+        # Flag any line whose packet bar has fully scrolled off the strip.
+        for line in self._log_lines:
+            if not line.dying and t >= line.expires_at:
+                line.dying = True
+
+        for line in self._log_lines:
+            if line.dying:
+                line.x += DIE_SLIDE_PX_PER_SEC * dt
+                continue
+            if line.falling:
+                line.vy += GRAVITY_PX_PER_SEC2 * dt
+                line.y += line.vy * dt
+                continue
+            diff = line.target_y - line.y
+            if abs(diff) <= 0.5:
+                line.y = line.target_y
+                continue
+            step = SCROLL_DOWN_PX_PER_SEC * dt
+            if diff > 0:
+                line.y += step if step < diff else diff
+            else:
+                line.y -= step if step < -diff else -diff
+
+        # Cull lines that have left the panel (right edge for dying,
+        # bottom edge for falling).
         self._log_lines = [
             l for l in self._log_lines
             if l.x < self.width and l.y < self.height
