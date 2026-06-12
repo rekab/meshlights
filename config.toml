@@ -68,28 +68,24 @@ overhead_sec   = 0.030
 exaggeration   = 1.0
 intensity      = 1.0
 
-# Soft-edge fade depth at the head and tail of every bar. Each bar
-# tapers linearly from full brightness in the middle to 0 at its edge
-# over this many pixels. Without it (= 0.0) bar edges are sharp
-# rectangles and the bar's leading edge appears to "snap" one pixel at
-# a time as it scrolls (perceptually ~10 Hz despite the 60 fps refresh
-# — that's pixel-quantized motion, not a slow loop). With ~1.5 px of
-# fade the bar's spatial gradient slides smoothly across pixels and
-# motion reads as continuous. Width-aware so a 0.5-px ACK isn't
-# squashed flat — narrow bars get fade depth = width / 2 instead.
-edge_fade_px   = 1.5
-
-# Dim halo extending beyond each bar's nominal edge. Layered behind the
-# bright trapezoid: brightness ramps from 0 at the halo's outer edge up
-# to halo_peak right at the bar's edge, then is lifted as the floor
-# under the bright fade (so the bright ramps blend smoothly from
-# halo_peak at the edge up to 1.0 at the inner fade). The halo spreads
-# the visual transition across MORE pixels at very low brightness, so
-# narrow bars (~1 px wide) don't appear to strobe as they cross pixel
-# boundaries — the eye sees a gradual dim glide instead of a discrete
-# pixel-jump. halo_peak = 0 disables.
-halo_depth     = 4.0
-halo_peak      = 0.06
+# Visual smoothing knobs — all 0.0 by default for an HONEST spectrogram
+# (bar pixels reflect only the packet's real airtime; sub-pixel
+# anti-aliasing still smooths the bar edges, but the bar doesn't
+# spread past its actual extent or fade its centre).
+#
+# Crank them up if you want smoother-looking motion at the cost of
+# letting bars visually occupy more channel than they really did:
+#   edge_fade_px ~1.5  — tapers each bar's head/tail linearly to 0 over
+#                        this many pixels INSIDE the bar's extent. Hides
+#                        the pixel-jump feel of slow scroll; mildly
+#                        dims narrow bars.
+#   halo_depth ~4.0 + halo_peak ~0.06 — dim halo extending OUTSIDE the
+#                        bar by halo_depth pixels at halo_peak peak
+#                        brightness. Smooths motion the most; least
+#                        honest — narrow bars get long dim tails.
+edge_fade_px   = 0.0
+halo_depth     = 0.0
+halo_peak      = 0.0
 
 # Saturation glow. LoRa is ALOHA-class — throughput collapses past
 # ~20–30% airtime utilization (S = G·e^(-2G) peaks at G≈0.5 with
