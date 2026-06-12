@@ -388,7 +388,7 @@ async def main():
     print(f"strip up ({cfg.pixels} px, hardware SPI0, brightness={cfg.brightness:.2f})")
 
     # Optional OLED status screen (best-effort — None if i2c/panel missing).
-    screen = oled_screen.connect()
+    screen = oled_screen.connect(driver=cfg.oled_driver)
     if screen is not None:
         print("OLED up (idle attract + packet log)")
         screen.show_lines(["meshlights",

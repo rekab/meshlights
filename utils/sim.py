@@ -186,7 +186,7 @@ class Sim:
         self.cfg = cfg
         animations.configure(self.cfg.pixels)
         self.strip, self.pixel_view = setup_strip(self.cfg.brightness, self.cfg.pixels)
-        self.screen = oled_screen.connect()
+        self.screen = oled_screen.connect(driver=self.cfg.oled_driver)
         if self.screen is not None:
             # Show a startup banner for 2s, then auto-dismiss to the idle
             # attract animation built into screen.py.

@@ -55,6 +55,7 @@ UNKNOWN_HEAD_COLOR = (100, 100, 100)   # neutral gray (matches UNKNOWN_COLOR; av
 
 
 STYLES = ("comet", "waterfall")
+OLED_DRIVERS = ("ssd1309", "ssd1306", "sh1106")
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class Config:
     waterfall_glow_threshold: float  # utilization fraction where saturation glow starts
     waterfall_glow_peak: float       # peak brightness of the saturation glow
     waterfall_glow_color: tuple      # RGB (0..255) color of the saturation glow
+    oled_driver: str                 # "ssd1309" (default) | "ssd1306" | "sh1106"
 
 
 def load_config(path):
@@ -85,12 +87,20 @@ def load_config(path):
     strip = data.get("strip", {})
     bloom = data.get("bloom", {})
     wf = data.get("waterfall", {})
+    oled = data.get("oled", {})
     style = str(data.get("style", "waterfall"))
     if style not in STYLES:
         raise ValueError(
             f"config: style={style!r} not recognized — must be one of "
             f"{STYLES}. Set top-level `style = \"comet\"` or "
             f"`style = \"waterfall\"` in {path}."
+        )
+    oled_driver = str(oled.get("driver", "ssd1309"))
+    if oled_driver not in OLED_DRIVERS:
+        raise ValueError(
+            f"config: [oled] driver={oled_driver!r} not recognized — must be one of "
+            f"{OLED_DRIVERS}. Set `driver = \"ssd1309\"` (or another supported "
+            f"driver) under [oled] in {path}."
         )
     return Config(
         pixels=int(strip.get("pixels", 144)),
@@ -113,6 +123,7 @@ def load_config(path):
         waterfall_glow_color=_parse_rgb(wf.get("glow_color", (255, 0, 0)),
                                        field="[waterfall] glow_color",
                                        path=path),
+        oled_driver=oled_driver,
     )
 
 

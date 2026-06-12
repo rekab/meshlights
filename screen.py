@@ -1,6 +1,9 @@
-"""SSD1306 OLED helper — packet log + idle attract animation.
+"""OLED helper — packet log + idle attract animation.
 
-Driven via luma.oled's native SSD1306 driver.
+Supports SSD1309 (default — 2.42" modules), SSD1306 (smaller 0.96"
+modules), and SH1106 (some modules labeled SSD1309 ship with SH1106
+silicon) via luma.oled. Driver selected by `[oled] driver` in
+config.toml.
 
 Wiring: VCC, GND, SCL1 (GPIO 3, pin 5), SDA1 (GPIO 2, pin 3). Pi i2c-1
 must be enabled (see README "Enable i2c").
@@ -39,12 +42,14 @@ from animations import HEARTBEAT_TRAVERSAL_TIME
 
 try:
     from luma.core.interface.serial import i2c as luma_i2c
-    from luma.oled.device import ssd1306
+    from luma.oled.device import sh1106, ssd1306, ssd1309
     from PIL import Image, ImageDraw, ImageFont
     _LUMA_AVAILABLE = True
+    _DRIVERS = {"ssd1309": ssd1309, "ssd1306": ssd1306, "sh1106": sh1106}
 except ImportError as e:
     print(f"screen deps missing: {e}", file=sys.stderr)
     _LUMA_AVAILABLE = False
+    _DRIVERS = {}
 
 
 DEFAULT_W = 128
@@ -82,10 +87,16 @@ def _load_font():
     return ImageFont.load_default()
 
 
-def connect(width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
-    """Bring up the OLED via luma.oled's native SSD1306 driver. Returns a
-    Screen on success or None if the panel can't be reached."""
+def connect(driver="ssd1309", width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
+    """Bring up the OLED via luma.oled. `driver` is one of
+    'ssd1309' / 'ssd1306' / 'sh1106' — see `[oled] driver` in
+    config.toml. Returns a Screen on success or None if the panel can't
+    be reached."""
     if not _LUMA_AVAILABLE:
+        return None
+    if driver not in _DRIVERS:
+        print(f"unknown OLED driver {driver!r}; valid: {sorted(_DRIVERS)}",
+              file=sys.stderr)
         return None
     try:
         serial = luma_i2c(port=1, address=addr)
@@ -94,13 +105,33 @@ def connect(width=DEFAULT_W, height=DEFAULT_H, addr=DEFAULT_ADDR):
               f"(is i2c enabled? `sudo raspi-config nonint do_i2c 0 && sudo reboot`)",
               file=sys.stderr)
         return None
+    driver_cls = _DRIVERS[driver]
     try:
-        oled = ssd1306(serial, width=width, height=height)
+        oled = driver_cls(serial, width=width, height=height)
     except Exception as e:
-        print(f"SSD1306 init failed at 0x{addr:02X}: {e}  "
+        print(f"{driver} init failed at 0x{addr:02X}: {e}  "
               f"(check wiring; run `i2cdetect -y 1` to scan)", file=sys.stderr)
         return None
+    if driver == "ssd1309":
+        _retune_ssd1309(oled)
     return Screen(oled, width, height)
+
+
+def _retune_ssd1309(oled):
+    """luma.oled's `class ssd1309(ssd1306): pass` inherits the SSD1306 init
+    verbatim, which leaves SETPRECHARGE=0xF1 and SETVCOMDETECT=0x40 — both
+    too aggressive for SSD1309 and the cause of column ghosting (residual
+    charge on the column driver leaks faint glow into rows above lit
+    pixels). Override after init. Verified against the 2.42" Hosyond
+    module — if your panel still ghosts, dial these in via
+    utils/screen_debug.py --precharge/--vcomh/--contrast."""
+    # SETPRECHARGE — 2 DCLK phase 1 + 2 DCLK phase 2 (was 1+15).
+    oled.command(0xD9, 0x22)
+    # SETVCOMDETECT — ~0.78 × Vcc deselect (0x40 specifically interacts
+    # poorly with SSD1309's driver).
+    oled.command(0xDB, 0x30)
+    # Contrast back to half — less driver saturation = less bleed.
+    oled.contrast(0x7F)
 
 
 class _LogLine:

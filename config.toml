@@ -81,3 +81,14 @@ intensity      = 1.0
 glow_threshold = 0.20
 glow_peak      = 0.15
 glow_color     = [255, 0, 0]
+
+[oled]
+# OLED panel controller. The default ssd1309 covers the 2.42" Hosyond
+# (and similar) modules — luma's ssd1309 device class is the same as
+# ssd1306 with custom pre-charge / VCOMH / contrast applied to suppress
+# the SSD1309 column-ghosting (residual charge leak into rows above lit
+# pixels). Use "ssd1306" for the smaller 0.96" modules; use "sh1106" if
+# you have an SSD1309-labeled module that's actually SH1106 silicon
+# (some clones are). If ghosting persists or the panel is dark, dial in
+# with utils/screen_debug.py --driver ... --precharge ... --vcomh ...
+driver = "ssd1309"

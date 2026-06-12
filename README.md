@@ -98,9 +98,13 @@ SPI driver is loaded and the bus is live. No nodes = it didn't take, recheck
 
 ## Enable i2c (for the optional OLED status screen)
 
-A small SSD1306 OLED (128x64 over i2c) can be wired to the Pi to display a
-scrolling log of received packets. Wire VCC → 3.3 V (pin 1), GND → any GND,
-SDA → GPIO 2 / SDA1 (pin 3), SCL → GPIO 3 / SCL1 (pin 5).
+An SSD1309 (default — 2.42" panel) or SSD1306 (0.96" panel) OLED over i2c
+can be wired to the Pi to display a scrolling log of received packets.
+Wire VCC → 3.3 V (pin 1), GND → any GND, SDA → GPIO 2 / SDA1 (pin 3),
+SCL → GPIO 3 / SCL1 (pin 5). Select the driver under `[oled] driver` in
+`config.toml` (`"ssd1309"` / `"ssd1306"` / `"sh1106"`); see the inline
+comment for what each is for. If a panel is dark or shows column
+ghosting, dial it in with `utils/screen_debug.py --driver …`.
 
 `sudo raspi-config` → **Interface Options** → **I2C** → **Enable**, then reboot.
 Non-interactive equivalent:
