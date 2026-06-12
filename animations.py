@@ -545,32 +545,55 @@ class Waterfall:
             fade_depth = self.edge_fade_px
             if width_px < 2.0 * fade_depth:
                 fade_depth = width_px / 2.0
+            # Soft-edge bar profile is a trapezoid: ramps from 0 to 1
+            # over [left_px, ramp_left_end], flat at 1 through
+            # [ramp_left_end, ramp_right_start], ramps back to 0 over
+            # [ramp_right_start, right_px]. For narrow bars (fade_depth
+            # = width/2) the flat middle vanishes and the profile is
+            # a triangle.
+            #
+            # Each pixel's brightness = the EXACT integral of that
+            # profile over the pixel's column [i, i+1]. Midpoint
+            # sampling was overestimating when the profile's peak
+            # landed inside a pixel (narrow bars), causing total
+            # brightness to swing ~30–40 % as the bar slid across
+            # pixel boundaries — visible as flicker at small packet
+            # widths.
+            ramp_left_end = left_px + fade_depth
+            ramp_right_start = right_px - fade_depth
+            two_f = 2.0 * fade_depth
             for i in range(i_lo, i_hi + 1):
-                cov = min(i + 1, right_px) - max(i, left_px)
-                if cov <= 0.0:
+                a = float(i)
+                if a < left_px:
+                    a = left_px
+                b = float(i + 1)
+                if b > right_px:
+                    b = right_px
+                if a >= b:
                     continue
-                # Distance from the centroid of THIS pixel's covered
-                # sub-segment to the nearer bar edge. Using the segment
-                # centroid (not the pixel center) keeps the fade smooth
-                # as the bar slides across pixel boundaries — neighboring
-                # pixels see continuous brightness changes rather than
-                # snap-to-grid steps. This is what visually undoes the
-                # "10 Hz" feel of the pixel-quantized scroll.
-                seg_left = max(float(i), left_px)
-                seg_right = min(float(i + 1), right_px)
-                seg_center = 0.5 * (seg_left + seg_right)
-                edge_dist = min(seg_center - left_px, right_px - seg_center)
-                if fade_depth > 1e-6:
-                    soft = edge_dist / fade_depth
-                    if soft > 1.0:
-                        soft = 1.0
-                    elif soft < 0.0:
-                        soft = 0.0
+                if fade_depth <= 1e-6:
+                    amt = b - a
                 else:
-                    soft = 1.0
-                amt = cov * soft
-                fb[i] += color * (amt * self.intensity)
-                coverage[i] += amt
+                    amt = 0.0
+                    # Left ramp: ∫ (x - left_px)/fade_depth dx
+                    if a < ramp_left_end:
+                        x2 = b if b < ramp_left_end else ramp_left_end
+                        amt += ((x2 - left_px) * (x2 - left_px)
+                                - (a - left_px) * (a - left_px)) / two_f
+                    # Flat middle (skipped when fade meets in the centre)
+                    if ramp_right_start > ramp_left_end:
+                        x1 = a if a > ramp_left_end else ramp_left_end
+                        x2 = b if b < ramp_right_start else ramp_right_start
+                        if x2 > x1:
+                            amt += x2 - x1
+                    # Right ramp: ∫ (right_px - x)/fade_depth dx
+                    if b > ramp_right_start:
+                        x1 = a if a > ramp_right_start else ramp_right_start
+                        amt += ((right_px - x1) * (right_px - x1)
+                                - (right_px - b) * (right_px - b)) / two_f
+                if amt > 0.0:
+                    fb[i] += color * (amt * self.intensity)
+                    coverage[i] += amt
 
         # Saturation glow. Real LoRa is ALOHA-class — collisions are
         # whoever-talked-during-this-2T-window — and the throughput
