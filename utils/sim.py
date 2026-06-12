@@ -284,7 +284,7 @@ class Sim:
         synth_rssi = random.randint(-105, -45)
         synth_hops = random.choice((0, 0, 1, 1, 2, 2, 3, 4))  # bias toward few hops
         hops_str = "1 hop" if synth_hops == 1 else f"{synth_hops} hops"
-        subline = f"⎿ {synth_rssi}dBm  {hops_str}"
+        subline = f"  {synth_rssi}dBm  {hops_str}"
         self.log_packet(label, detail, lifetime, subline=subline)
 
     def log_packet(self, label, detail, duration_s, subline=None):

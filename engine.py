@@ -140,13 +140,14 @@ class Engine:
                     # Line 1: "LABEL  Nms/Nb" — airtime over bytes, the
                     # two axes the strip's bar width fuses into one.
                     detail = f"{int(round(airtime * 1000))}ms/{n_bytes}B"
-                    # Line 2: "⎿ rssi · hops" — the two axes the strip
-                    # CAN'T show. dBm + hop count, indented under the
-                    # header with an arc bracket.
+                    # Line 2: "  rssi  hops" — two-space indent +
+                    # dBm and hop count, the two axes the strip can't
+                    # show. Plain indent (no bracket glyph — U+23BF
+                    # doesn't render reliably on small bitmap renders).
                     n_hops = hops or 0
                     hops_str = "1 hop" if n_hops == 1 else f"{n_hops} hops"
                     rssi_str = f"{rssi}dBm" if rssi is not None else "?dBm"
-                    subline = f"⎿ {rssi_str}  {hops_str}"
+                    subline = f"  {rssi_str}  {hops_str}"
                     self.screen.push_packet(label, detail, lifetime, subline=subline)
                 except Exception as e:
                     print(f"screen push_packet error: {e}", file=sys.stderr)
