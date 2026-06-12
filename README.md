@@ -263,8 +263,8 @@ when individual packets are small. Knobs in `[waterfall]`:
 | `overhead_sec` | `0.030` | Fixed LoRa PHY cost (preamble + explicit header) per transmission. Without this, small packets (ACKs) hit the floor and disappear. |
 | `exaggeration` | `1.0` | Visual width multiplier on real airtime. At `1.0` the strip is honest 1:1 — fraction of strip lit = fraction of channel time used, so 20% lit = real saturation. Crank to `4.0–5.0` to dramatize channel pressure (each bar 5× wider than real airtime) at the cost of breaking the 1 px = X ms reading. |
 | `intensity` | `1.0` | Overall bar brightness multiplier on top of `strip.brightness`. |
-| `edge_fade_px` | `0.0` | Linear taper at each bar's head/tail INSIDE its extent. `0` keeps bars honest; bump to ~1.5 for smoother-looking scroll motion at the cost of dimming narrow bars. |
-| `halo_depth` / `halo_peak` | `0.0` / `0.0` | Dim halo OUTSIDE each bar's nominal extent — `halo_peak` brightness ramping to 0 over `halo_depth` pixels. Off by default (honest spectrogram). Try `4.0` / `0.06` for a long dim glide on narrow bars (smoothest motion, least honest about packet size). |
+| `edge_fade_px` | `1.5` | Linear taper at each bar's head/tail INSIDE its extent. Hides the pixel-snap feel of slow scroll; mildly dims narrow bars. Set `0.0` for strict honest edges. |
+| `halo_depth` / `halo_peak` | `4.0` / `0.06` | Dim halo OUTSIDE each bar's nominal extent — `halo_peak` brightness at the bar edge ramping to 0 over `halo_depth` pixels. Smooths motion the most; least honest — narrow bars get long dim tails. Set `halo_peak = 0` to disable. |
 | `glow_threshold` | `0.20` | Channel utilization fraction at which the saturation glow begins (default 20%, matching LoRa's ALOHA collapse threshold). |
 | `glow_peak` | `0.15` | Peak brightness of the saturation glow at 2× threshold utilization (40% by default). Set `0` to disable. |
 | `glow_color` | `[255, 0, 0]` | RGB (0..255) color of the saturation glow. Lives BEHIND the packet bars — bar pixels keep their honest payload color; only gap pixels show the glow. |

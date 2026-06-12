@@ -68,24 +68,25 @@ overhead_sec   = 0.030
 exaggeration   = 1.0
 intensity      = 1.0
 
-# Visual smoothing knobs — all 0.0 by default for an HONEST spectrogram
-# (bar pixels reflect only the packet's real airtime; sub-pixel
-# anti-aliasing still smooths the bar edges, but the bar doesn't
-# spread past its actual extent or fade its centre).
+# Visual smoothing knobs. Defaults add mild smoothing so bars glide
+# across pixels at slow scroll rates instead of snapping pixel-to-pixel
+# (which the eye reads as choppy at the strip's ~10 px/s scroll). Zero
+# all three for a strict spectrogram where bars represent only their
+# real airtime extent — more honest about packet size, slightly
+# choppier motion on narrow bars.
 #
-# Crank them up if you want smoother-looking motion at the cost of
-# letting bars visually occupy more channel than they really did:
-#   edge_fade_px ~1.5  — tapers each bar's head/tail linearly to 0 over
-#                        this many pixels INSIDE the bar's extent. Hides
-#                        the pixel-jump feel of slow scroll; mildly
-#                        dims narrow bars.
-#   halo_depth ~4.0 + halo_peak ~0.06 — dim halo extending OUTSIDE the
-#                        bar by halo_depth pixels at halo_peak peak
-#                        brightness. Smooths motion the most; least
-#                        honest — narrow bars get long dim tails.
-edge_fade_px   = 0.0
-halo_depth     = 0.0
-halo_peak      = 0.0
+# edge_fade_px — linear taper at each bar's head/tail INSIDE its
+#                extent. Width-aware so a 0.5-px ACK isn't squashed
+#                to half-brightness at its centre.
+# halo_depth /
+# halo_peak    — dim halo extending OUTSIDE the bar by halo_depth
+#                pixels, ramping from halo_peak at the bar's edge to 0
+#                at the halo's outer edge. Smooths motion the most;
+#                least honest — narrow bars get long dim tails.
+#                halo_peak = 0 disables.
+edge_fade_px   = 1.5
+halo_depth     = 4.0
+halo_peak      = 0.06
 
 # Saturation glow. LoRa is ALOHA-class — throughput collapses past
 # ~20–30% airtime utilization (S = G·e^(-2G) peaks at G≈0.5 with
