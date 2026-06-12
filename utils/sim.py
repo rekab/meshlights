@@ -278,16 +278,24 @@ class Sim:
         airtime = (self.cfg.waterfall_overhead_sec
                    + max(n_bytes, 0) / self.cfg.waterfall_bytes_per_sec)
         lifetime = self.cfg.waterfall_seconds + airtime
-        self.log_packet(label, _bytes_str(n_bytes), lifetime)
+        # Header: "LABEL Nms/NB". Subline: synthetic RSSI + hops so the
+        # display feels realistic during sim sessions.
+        detail = f"{int(round(airtime * 1000))}ms/{n_bytes}B"
+        synth_rssi = random.randint(-105, -45)
+        synth_hops = random.choice((0, 0, 1, 1, 2, 2, 3, 4))  # bias toward few hops
+        hops_str = "1 hop" if synth_hops == 1 else f"{synth_hops} hops"
+        subline = f"⎿ {synth_rssi}dBm  {hops_str}"
+        self.log_packet(label, detail, lifetime, subline=subline)
 
-    def log_packet(self, label, detail, duration_s):
+    def log_packet(self, label, detail, duration_s, subline=None):
         """Mirror the spawn onto the OLED log (no-op when no screen).
         `detail` is a pre-formatted trailing token, e.g. "3 hops" or
         "60 bytes" — caller picks the most informative summary for its
-        mode (matches engine.py)."""
+        mode (matches engine.py). `subline` is the optional second line
+        (waterfall mode only — ignored by comet)."""
         if self.screen is None:
             return
-        self.screen.push_packet(label, detail, duration_s)
+        self.screen.push_packet(label, detail, duration_s, subline=subline)
 
     def _on_heartbeat_start(self, t):
         if self.screen is not None:

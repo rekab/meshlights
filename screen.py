@@ -73,17 +73,25 @@ FONT_PATHS = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 )
 FONT_SIZE = 11
-LINE_HEIGHT = 12              # vertical step per log line (px)
+LINE_HEIGHT = 12              # vertical step per log line in comet mode (px)
+# Waterfall mode runs two-line entries: a bold 10pt header and a regular
+# 11pt subline, separated by ~11 px so the slot is 22 px total — three
+# fit on a 64 px panel.
+WATERFALL_HEADER_FONT_SIZE = 10
+WATERFALL_HEADER_LINE_H = 11
+WATERFALL_SUBLINE_OFFSET_Y = 11   # subline baseline = header.y + this
+WATERFALL_SLOT_H = 22             # vertical advance per waterfall entry
 GRAVITY_PX_PER_SEC2 = 280.0   # downward acceleration for falling lines
 DIE_SLIDE_PX_PER_SEC = 180.0  # horizontal velocity when a line dies + scrolls off
-SCROLL_DOWN_PX_PER_SEC = 80.0 # waterfall mode: vertical slide speed toward target_y
-                              # (≈ 150 ms per line_h step — snappy, doesn't lag bursts)
+SCROLL_DOWN_PX_PER_SEC = 140.0 # waterfall mode: vertical slide speed toward target_y
+                              # (≈ 160 ms per slot — snappy, doesn't lag bursts)
 
 
-def _load_font():
-    for path in FONT_PATHS:
+def _load_font(size=FONT_SIZE, prefer_bold=True):
+    paths = FONT_PATHS if prefer_bold else tuple(reversed(FONT_PATHS))
+    for path in paths:
         try:
-            return ImageFont.truetype(path, FONT_SIZE)
+            return ImageFont.truetype(path, size)
         except (OSError, IOError):
             continue
     return ImageFont.load_default()
@@ -141,10 +149,14 @@ def _retune_ssd1309(oled):
 
 
 class _LogLine:
-    __slots__ = ("text", "born_at", "expires_at", "y", "target_y", "vy", "x", "dying", "falling")
+    __slots__ = ("text", "subline", "born_at", "expires_at",
+                 "y", "target_y", "vy", "x", "dying", "falling")
 
-    def __init__(self, text, born_at, expires_at, y, target_y=None):
+    def __init__(self, text, born_at, expires_at, y, target_y=None, subline=None):
         self.text = text
+        # Waterfall mode pairs the main line with a smaller second line
+        # (RSSI + hops). None in comet mode or when no subline is supplied.
+        self.subline = subline
         self.born_at = born_at
         self.expires_at = expires_at
         self.y = float(y)
@@ -315,6 +327,10 @@ class Screen:
         #                 the bottom under gravity).
         self._log_style = style
         self.font = _load_font()
+        # Smaller bold for waterfall headers (need to fit "LABEL Xms/YB"
+        # in 128 px), regular weight for the subline (RSSI + hops).
+        self.header_font = _load_font(size=WATERFALL_HEADER_FONT_SIZE)
+        self.subline_font = _load_font(size=FONT_SIZE, prefer_bold=False)
         self._img = Image.new("1", (width, height))
         self._draw = ImageDraw.Draw(self._img)
         # Banner state (shared across all modes)
@@ -418,17 +434,21 @@ class Screen:
 
     # ---- public API ----
 
-    def push_packet(self, label, detail, duration_s):
+    def push_packet(self, label, detail, duration_s, subline=None):
         """Append a packet line formatted as "LABEL DETAIL" (e.g.
-        "TXT_MSG 60 bytes" in waterfall mode, "TXT_MSG 3 hops" in comet
-        mode — the caller picks the trailing token since each style has
-        its own most-informative summary).
+        "TXT_MSG 60 bytes" in comet mode, "TXT_MSG 206ms/60B" in
+        waterfall mode — the caller picks the trailing token since each
+        style has its own most-informative summary).
+
+        `subline` is optional — used in waterfall mode for the second
+        smaller line (typically RSSI + hops). Comet mode ignores it.
 
         Comet mode: spawns just above the top of the panel (above any
         in-flight new lines) and falls under gravity onto the stack.
         Waterfall mode: spawns at y=0 and bumps every other live line's
-        target_y down by LINE_HEIGHT. Lines whose target_y crosses the
-        panel floor switch to a gravity-fall — falling off the bottom."""
+        target_y down by WATERFALL_SLOT_H (two-line slot). Lines whose
+        target_y crosses the panel floor switch to a gravity-fall —
+        falling off the bottom."""
         text = f"{label} {detail}"
         with self._lock:
             born = time.monotonic()
@@ -438,7 +458,7 @@ class Screen:
                 for line in self._log_lines:
                     if line.dying:
                         continue
-                    line.target_y += LINE_HEIGHT
+                    line.target_y += WATERFALL_SLOT_H
                     if line.target_y >= self.height and not line.falling:
                         line.falling = True
                         line.vy = 0.0
@@ -446,6 +466,7 @@ class Screen:
                     text=text, born_at=born,
                     expires_at=born + duration_s,
                     y=0.0, target_y=0.0,
+                    subline=subline,
                 ))
                 return
             # Comet mode (original spawn-above-panel rain):
@@ -609,7 +630,12 @@ class Screen:
           - Otherwise lines ease toward their target_y at a constant
             slide speed — newest at y=0, oldest at the bottom of the
             stack. push_packet bumps target_y on existing lines as
-            new ones arrive."""
+            new ones arrive.
+
+        Each entry is two lines: header (10pt bold) at line.y, then
+        subline (11pt regular, with leading arc) at
+        line.y + WATERFALL_SUBLINE_OFFSET_Y. Slot height
+        WATERFALL_SLOT_H, so a 64 px panel fits ~3 entries."""
         dt = 1.0 / FRAME_RATE
 
         # Flag any line whose packet bar has fully scrolled off the strip.
@@ -643,5 +669,12 @@ class Screen:
         ]
 
         for line in self._log_lines:
-            self._draw.text((int(line.x), int(line.y)), line.text,
-                            font=self.font, fill=255)
+            x = int(line.x)
+            y = int(line.y)
+            self._draw.text((x, y), line.text,
+                            font=self.header_font, fill=255)
+            if line.subline:
+                sub_y = y + WATERFALL_SUBLINE_OFFSET_Y
+                if sub_y < self.height:
+                    self._draw.text((x, sub_y), line.subline,
+                                    font=self.subline_font, fill=255)
