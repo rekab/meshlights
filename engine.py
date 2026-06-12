@@ -83,6 +83,7 @@ class Engine:
                 edge_fade_px=cfg.waterfall_edge_fade_px,
                 halo_depth=cfg.waterfall_halo_depth,
                 halo_peak=cfg.waterfall_halo_peak,
+                reverse_flow=cfg.waterfall_reverse_flow,
                 glow_threshold=cfg.waterfall_glow_threshold,
                 glow_peak=cfg.waterfall_glow_peak,
                 glow_color=cfg.waterfall_glow_color,

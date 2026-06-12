@@ -451,6 +451,7 @@ class Waterfall:
     edge_fade_px: float = 1.5       # head/tail soft-edge fade depth
     halo_depth: float = 0.0         # dim halo pixels beyond bar edges (0 = off)
     halo_peak: float = 0.0          # halo brightness at bar's edge (0..1)
+    reverse_flow: bool = False      # True: bars enter at pixel 0 and flow toward pixel n-1
     glow_threshold: float = 0.0     # 0 disables the saturation glow
     glow_peak: float = 0.0          # peak brightness of the saturation glow
     glow_color: tuple = (255, 0, 0)
@@ -660,3 +661,14 @@ class Waterfall:
                 frac = ramp if ramp < 1.0 else 1.0
                 np.clip(coverage, 0.0, 1.0, out=coverage)
                 fb += ((self.glow_peak * frac) * (1.0 - coverage))[:, None] * self.glow_color
+
+        # Flow direction. Default (reverse_flow=False): live edge = right
+        # of strip (pixel n_px), bars scroll left toward pixel 0 — flow
+        # toward the input wires. reverse_flow=True flips this: bars
+        # appear at pixel 0 (input end) and scroll right toward pixel
+        # n-1, so the flow moves AWAY from the input wires. Implemented
+        # as a post-step mirror of the framebuffer so the bar math, the
+        # coverage tracking, and the saturation glow all stay in one
+        # consistent frame and just get flipped together at the end.
+        if self.reverse_flow:
+            fb[:] = fb[::-1]

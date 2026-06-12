@@ -265,6 +265,7 @@ when individual packets are small. Knobs in `[waterfall]`:
 | `intensity` | `1.0` | Overall bar brightness multiplier on top of `strip.brightness`. |
 | `edge_fade_px` | `1.5` | Linear taper at each bar's head/tail INSIDE its extent. Hides the pixel-snap feel of slow scroll; mildly dims narrow bars. Set `0.0` for strict honest edges. |
 | `halo_depth` / `halo_peak` | `4.0` / `0.06` | Dim halo OUTSIDE each bar's nominal extent — `halo_peak` brightness at the bar edge ramping to 0 over `halo_depth` pixels. Smooths motion the most; least honest — narrow bars get long dim tails. Set `halo_peak = 0` to disable. |
+| `reverse_flow` | `true` | Flow direction. `false` puts the live edge at pixel n-1 (far end) — bars scroll TOWARD the input wires. `true` puts it at pixel 0 — bars scroll AWAY from the input wires. |
 | `glow_threshold` | `0.20` | Channel utilization fraction at which the saturation glow begins (default 20%, matching LoRa's ALOHA collapse threshold). |
 | `glow_peak` | `0.15` | Peak brightness of the saturation glow at 2× threshold utilization (40% by default). Set `0` to disable. |
 | `glow_color` | `[255, 0, 0]` | RGB (0..255) color of the saturation glow. Lives BEHIND the packet bars — bar pixels keep their honest payload color; only gap pixels show the glow. |
