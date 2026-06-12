@@ -75,6 +75,7 @@ class Config:
     waterfall_overhead_sec: float    # fixed LoRa PHY cost per TX (s)
     waterfall_exaggeration: float    # visual width multiplier on airtime
     waterfall_intensity: float       # waterfall bar brightness multiplier
+    waterfall_edge_fade_px: float    # head/tail soft-edge fade depth (pixels)
     waterfall_glow_threshold: float  # utilization fraction where saturation glow starts
     waterfall_glow_peak: float       # peak brightness of the saturation glow
     waterfall_glow_color: tuple      # RGB (0..255) color of the saturation glow
@@ -118,6 +119,7 @@ def load_config(path):
         waterfall_overhead_sec=float(wf.get("overhead_sec", 0.030)),
         waterfall_exaggeration=float(wf.get("exaggeration", 1.0)),
         waterfall_intensity=float(wf.get("intensity", 1.0)),
+        waterfall_edge_fade_px=float(wf.get("edge_fade_px", 1.5)),
         waterfall_glow_threshold=float(wf.get("glow_threshold", 0.20)),
         waterfall_glow_peak=float(wf.get("glow_peak", 0.15)),
         waterfall_glow_color=_parse_rgb(wf.get("glow_color", (255, 0, 0)),

@@ -212,6 +212,7 @@ class Sim:
                 overhead_sec=self.cfg.waterfall_overhead_sec,
                 exaggeration=self.cfg.waterfall_exaggeration,
                 intensity=self.cfg.waterfall_intensity,
+                edge_fade_px=self.cfg.waterfall_edge_fade_px,
                 glow_threshold=self.cfg.waterfall_glow_threshold,
                 glow_peak=self.cfg.waterfall_glow_peak,
                 glow_color=self.cfg.waterfall_glow_color,

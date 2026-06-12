@@ -448,6 +448,7 @@ class Waterfall:
     overhead_sec: float
     exaggeration: float = 1.0       # visual width multiplier
     intensity: float = 1.0
+    edge_fade_px: float = 1.5       # head/tail soft-edge fade depth
     glow_threshold: float = 0.0     # 0 disables the saturation glow
     glow_peak: float = 0.0          # peak brightness of the saturation glow
     glow_color: tuple = (255, 0, 0)
@@ -537,11 +538,39 @@ class Waterfall:
             i_hi = min(n_px - 1, int(math.floor(right_px)))
             if i_hi < i_lo:
                 continue
+            # Width-aware soft-edge depth: bars wider than 2× edge_fade_px
+            # get the full fade; narrower bars get fade_depth = width/2
+            # so a 0.5-px ACK still peaks at full brightness at its center
+            # instead of getting squashed by edges meeting in the middle.
+            fade_depth = self.edge_fade_px
+            if width_px < 2.0 * fade_depth:
+                fade_depth = width_px / 2.0
             for i in range(i_lo, i_hi + 1):
                 cov = min(i + 1, right_px) - max(i, left_px)
-                if cov > 0.0:
-                    fb[i] += color * (cov * self.intensity)
-                    coverage[i] += cov
+                if cov <= 0.0:
+                    continue
+                # Distance from the centroid of THIS pixel's covered
+                # sub-segment to the nearer bar edge. Using the segment
+                # centroid (not the pixel center) keeps the fade smooth
+                # as the bar slides across pixel boundaries — neighboring
+                # pixels see continuous brightness changes rather than
+                # snap-to-grid steps. This is what visually undoes the
+                # "10 Hz" feel of the pixel-quantized scroll.
+                seg_left = max(float(i), left_px)
+                seg_right = min(float(i + 1), right_px)
+                seg_center = 0.5 * (seg_left + seg_right)
+                edge_dist = min(seg_center - left_px, right_px - seg_center)
+                if fade_depth > 1e-6:
+                    soft = edge_dist / fade_depth
+                    if soft > 1.0:
+                        soft = 1.0
+                    elif soft < 0.0:
+                        soft = 0.0
+                else:
+                    soft = 1.0
+                amt = cov * soft
+                fb[i] += color * (amt * self.intensity)
+                coverage[i] += amt
 
         # Saturation glow. Real LoRa is ALOHA-class — collisions are
         # whoever-talked-during-this-2T-window — and the throughput

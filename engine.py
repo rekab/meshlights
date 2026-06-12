@@ -80,6 +80,7 @@ class Engine:
                 overhead_sec=cfg.waterfall_overhead_sec,
                 exaggeration=cfg.waterfall_exaggeration,
                 intensity=cfg.waterfall_intensity,
+                edge_fade_px=cfg.waterfall_edge_fade_px,
                 glow_threshold=cfg.waterfall_glow_threshold,
                 glow_peak=cfg.waterfall_glow_peak,
                 glow_color=cfg.waterfall_glow_color,
