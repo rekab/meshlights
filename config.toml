@@ -79,6 +79,18 @@ intensity      = 1.0
 # squashed flat — narrow bars get fade depth = width / 2 instead.
 edge_fade_px   = 1.5
 
+# Dim halo extending beyond each bar's nominal edge. Layered behind the
+# bright trapezoid: brightness ramps from 0 at the halo's outer edge up
+# to halo_peak right at the bar's edge, then is lifted as the floor
+# under the bright fade (so the bright ramps blend smoothly from
+# halo_peak at the edge up to 1.0 at the inner fade). The halo spreads
+# the visual transition across MORE pixels at very low brightness, so
+# narrow bars (~1 px wide) don't appear to strobe as they cross pixel
+# boundaries — the eye sees a gradual dim glide instead of a discrete
+# pixel-jump. halo_peak = 0 disables.
+halo_depth     = 4.0
+halo_peak      = 0.06
+
 # Saturation glow. LoRa is ALOHA-class — throughput collapses past
 # ~20–30% airtime utilization (S = G·e^(-2G) peaks at G≈0.5 with
 # S≈18%, and the per-packet collision rate is 1 - e^(-2G), so 20%

@@ -449,6 +449,8 @@ class Waterfall:
     exaggeration: float = 1.0       # visual width multiplier
     intensity: float = 1.0
     edge_fade_px: float = 1.5       # head/tail soft-edge fade depth
+    halo_depth: float = 0.0         # dim halo pixels beyond bar edges (0 = off)
+    halo_peak: float = 0.0          # halo brightness at bar's edge (0..1)
     glow_threshold: float = 0.0     # 0 disables the saturation glow
     glow_peak: float = 0.0          # peak brightness of the saturation glow
     glow_color: tuple = (255, 0, 0)
@@ -534,10 +536,6 @@ class Waterfall:
             # even when individual packets are narrower than a pixel
             # (typical at 60s window: a 40-byte packet's ~150 ms airtime
             # spans ~0.18 px at 71 px / 60 s).
-            i_lo = max(0, int(math.floor(left_px)))
-            i_hi = min(n_px - 1, int(math.floor(right_px)))
-            if i_hi < i_lo:
-                continue
             # Width-aware soft-edge depth: bars wider than 2× edge_fade_px
             # get the full fade; narrower bars get fade_depth = width/2
             # so a 0.5-px ACK still peaks at full brightness at its center
@@ -545,55 +543,104 @@ class Waterfall:
             fade_depth = self.edge_fade_px
             if width_px < 2.0 * fade_depth:
                 fade_depth = width_px / 2.0
-            # Soft-edge bar profile is a trapezoid: ramps from 0 to 1
-            # over [left_px, ramp_left_end], flat at 1 through
-            # [ramp_left_end, ramp_right_start], ramps back to 0 over
-            # [ramp_right_start, right_px]. For narrow bars (fade_depth
-            # = width/2) the flat middle vanishes and the profile is
-            # a triangle.
-            #
-            # Each pixel's brightness = the EXACT integral of that
-            # profile over the pixel's column [i, i+1]. Midpoint
-            # sampling was overestimating when the profile's peak
-            # landed inside a pixel (narrow bars), causing total
-            # brightness to swing ~30–40 % as the bar slid across
-            # pixel boundaries — visible as flicker at small packet
-            # widths.
+            # Brightness profile is two stacked trapezoids:
+            #   1. BRIGHT core (trapezoid, peak 1.0): 0 at left_px,
+            #      ramps to 1.0 over fade_depth, flat across the
+            #      middle, ramps back to 0 over fade_depth, 0 at
+            #      right_px.
+            #   2. DIM halo (optional): linear taper from 0 at
+            #      left_px - halo_depth → halo_peak at left_px,
+            #      continuing at halo_peak BEHIND the bright fade
+            #      (i.e. the bright profile is lifted by p, then
+            #      blended to 1.0 at the inner fade end), then
+            #      mirrored on the right.
+            # The "bright with halo lift" combination is just a piecewise
+            # linear function over the whole [left-h, right+h] range —
+            # we integrate it analytically for each pixel column so
+            # total brightness is conserved as the bar slides (no
+            # flicker).
+            h = self.halo_depth
+            p = self.halo_peak
+            has_halo = h > 0.0 and p > 0.0
             ramp_left_end = left_px + fade_depth
             ramp_right_start = right_px - fade_depth
-            two_f = 2.0 * fade_depth
+            halo_left_start = left_px - h
+            halo_right_end = right_px + h
+            two_f = 2.0 * fade_depth if fade_depth > 1e-6 else 1.0
+            two_h = 2.0 * h if h > 1e-6 else 1.0
+            i_lo = max(0, int(math.floor(halo_left_start if has_halo else left_px)))
+            i_hi_raw = halo_right_end if has_halo else right_px
+            i_hi = min(n_px - 1, int(math.floor(i_hi_raw)))
+            if i_hi < i_lo:
+                continue
             for i in range(i_lo, i_hi + 1):
                 a = float(i)
-                if a < left_px:
-                    a = left_px
                 b = float(i + 1)
-                if b > right_px:
-                    b = right_px
-                if a >= b:
-                    continue
-                if fade_depth <= 1e-6:
-                    amt = b - a
-                else:
-                    amt = 0.0
-                    # Left ramp: ∫ (x - left_px)/fade_depth dx
-                    if a < ramp_left_end:
-                        x2 = b if b < ramp_left_end else ramp_left_end
-                        amt += ((x2 - left_px) * (x2 - left_px)
-                                - (a - left_px) * (a - left_px)) / two_f
-                    # Flat middle (skipped when fade meets in the centre)
-                    if ramp_right_start > ramp_left_end:
-                        x1 = a if a > ramp_left_end else ramp_left_end
-                        x2 = b if b < ramp_right_start else ramp_right_start
-                        if x2 > x1:
-                            amt += x2 - x1
-                    # Right ramp: ∫ (right_px - x)/fade_depth dx
-                    if b > ramp_right_start:
-                        x1 = a if a > ramp_right_start else ramp_right_start
-                        amt += ((right_px - x1) * (right_px - x1)
-                                - (right_px - b) * (right_px - b)) / two_f
+                amt = 0.0        # everything that lights this pixel
+                bright_amt = 0.0 # the trapezoid part only (for glow gating)
+
+                # Left halo ramp [halo_left_start, left_px], profile
+                #   = p * (x - halo_left_start) / h
+                if has_halo and a < left_px and b > halo_left_start:
+                    x1 = a if a > halo_left_start else halo_left_start
+                    x2 = b if b < left_px else left_px
+                    amt += (p / two_h) * ((x2 - halo_left_start) ** 2
+                                          - (x1 - halo_left_start) ** 2)
+
+                # Bright left ramp [left_px, ramp_left_end], profile
+                #   = p + (1-p) * (x - left_px) / fade_depth  (halo-lifted)
+                # When p == 0 this is the original trapezoid ramp.
+                if a < ramp_left_end and b > left_px:
+                    x1 = a if a > left_px else left_px
+                    x2 = b if b < ramp_left_end else ramp_left_end
+                    if fade_depth > 1e-6:
+                        seg = (p * (x2 - x1)
+                               + ((1.0 - p) / two_f)
+                                 * ((x2 - left_px) ** 2 - (x1 - left_px) ** 2))
+                    else:
+                        seg = x2 - x1
+                    amt += seg
+                    bright_amt += seg
+
+                # Flat middle [ramp_left_end, ramp_right_start], profile = 1
+                if ramp_right_start > ramp_left_end:
+                    x1 = a if a > ramp_left_end else ramp_left_end
+                    x2 = b if b < ramp_right_start else ramp_right_start
+                    if x2 > x1:
+                        amt += x2 - x1
+                        bright_amt += x2 - x1
+
+                # Bright right ramp [ramp_right_start, right_px], profile
+                #   = 1 - (1-p) * (x - ramp_right_start) / fade_depth
+                if a < right_px and b > ramp_right_start:
+                    x1 = a if a > ramp_right_start else ramp_right_start
+                    x2 = b if b < right_px else right_px
+                    if fade_depth > 1e-6:
+                        seg = ((x2 - x1)
+                               - ((1.0 - p) / two_f)
+                                 * ((x2 - ramp_right_start) ** 2
+                                    - (x1 - ramp_right_start) ** 2))
+                    else:
+                        seg = x2 - x1
+                    amt += seg
+                    bright_amt += seg
+
+                # Right halo ramp [right_px, halo_right_end], profile
+                #   = p * (1 - (x - right_px) / h)
+                if has_halo and a < halo_right_end and b > right_px:
+                    x1 = a if a > right_px else right_px
+                    x2 = b if b < halo_right_end else halo_right_end
+                    amt += (p * (x2 - x1)
+                            - (p / two_h)
+                              * ((x2 - right_px) ** 2 - (x1 - right_px) ** 2))
+
                 if amt > 0.0:
                     fb[i] += color * (amt * self.intensity)
-                    coverage[i] += amt
+                    # Glow gating uses bright_amt only — the dim halo
+                    # is for visual smoothing, not a real "bar presence"
+                    # signal, so the saturation glow should still show
+                    # through halo pixels.
+                    coverage[i] += bright_amt
 
         # Saturation glow. Real LoRa is ALOHA-class — collisions are
         # whoever-talked-during-this-2T-window — and the throughput
